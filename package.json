@@ -1,0 +1,32 @@
+{
+  "name": "wrhse-buyer-mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Customer-operated devnet buyer MCP for WRHSE checkout",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "src"
+  ],
+  "bin": {
+    "wrhse-buyer-mcp": "./src/cli.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@habix/ivana-checkout": "0.5.1",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@solana/spl-token": "^0.4.15",
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0",
+    "jspdf": "4.2.1",
+    "qrcode": "1.5.4",
+    "zod": "^4.6.7"
+  }
+}

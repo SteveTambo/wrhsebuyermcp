@@ -1,0 +1,135 @@
+# WRHSE buyer MCP (devnet test)
+
+This is a **customer-operated local MCP server** for testing agent-funded
+checkout. It is not part of WRHSE's merchant MCP and must not be deployed by
+WRHSE. The customer runs it beside their MCP client. The wallet key stays in
+that local process; WRHSE and IVANA receive only the public address and signed
+transaction. The existing WRHSE agent key authorizes intent creation through
+the new `checkout:purchase` permission; it never signs or pays.
+
+The initial test flow supports USDC purchases of public, non-ticket products
+from one store. It does not support cinema/ticket checkouts, donations, EVM,
+HBX, user-wallet delegation, unattended payments, or production networks.
+
+## Requirements
+
+- Node.js 22 or newer.
+- A dedicated, low-funded Solana devnet burner wallet.
+- The WRHSE API and IVANA payments API have defaults. RPC traffic is relayed
+  through IVANA's configured RPC; customers do not configure an RPC URL.
+- An MCP client that supports form-mode elicitation. The server refuses to sign
+  if it cannot request approval from the user.
+
+## Configure Windows environment variables
+
+Set these as **user-scoped** Windows environment variables so the local MCP
+process inherits them:
+
+| Variable                        | Required | Description                                                                                                                                      |
+| ------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `WRHSE_BUYER_AGENT_KEY`         | Yes      | Key created in **Profile → AI agents** with **Allow agent purchases** (`checkout:purchase`) selected. Never put it in prompts or source control. |
+| `WRHSE_BUYER_SOLANA_SECRET_KEY` | Yes      | Customer's dedicated burner-wallet key as base58 64-byte secret or Solana CLI JSON keypair array. Never share it with the agent or WRHSE.        |
+
+The WRHSE API and IVANA API URLs have defaults. The payment mint is taken from
+the checkout transaction built using IVANA's configured mint; the local server
+validates that it is a six-decimal SPL token and checks the burner's balance for
+that mint. Customers do not configure a separate mint.
+
+The local process sends intent-scoped balance, blockhash, broadcast, and
+recovery requests through IVANA. IVANA uses its configured `SOLANA_RPC_URL`;
+the URL and provider credentials remain server-side. The local process verifies
+that IVANA is connected to devnet for this test release. No customer RPC
+account or RPC environment variable is required.
+
+Use the Windows Environment Variables UI or your approved secret-management
+process to set the two keys. Windows user environment variables are readable by
+processes running as that user; only use a low-funded burner wallet with funds
+you can afford to lose. Restart the MCP client after changing variables. Do not
+use a production wallet or a key belonging to another person.
+
+Optional developer overrides are `WRHSE_BUYER_API_URL`,
+`WRHSE_BUYER_PAYMENTS_URL`, and `WRHSE_BUYER_MAX_USDC` (default 5 USDC, maximum
+100). Ordinary customers do not need to configure them.
+
+## VS Code Copilot install
+
+The npm package is prepared for public publishing. Once published, install and
+register the buyer MCP in one command:
+
+```powershell
+npx --yes wrhse-buyer-mcp setup
+```
+
+Setup checks the required environment variables and adds a `wrhse-buyer` entry
+to the user's Copilot MCP configuration. Existing MCP server entries are
+preserved. If a `wrhse-buyer` entry already exists, setup asks before replacing
+it. Secret values are never written to the MCP config.
+
+After setup, restart VS Code, start `wrhse-buyer` from the MCP server list, and
+verify it with a read-only product search.
+
+Until it is published on npm, clone the public
+[wrhsebuyermcp repository](https://github.com/SteveTambo/wrhsebuyermcp),
+run `npm ci` in its root, and configure Copilot to launch `node` with the
+absolute path to `src/main.js`. Do not put either secret in MCP configuration.
+
+## Agent instructions
+
+Give the agent these rules, without including the secret:
+
+- Use only `search_public_products` to discover products, then
+  `prepare_checkout` with the customer's actual product choices and delivery
+  details.
+- Show the returned products, server-priced total, wallet address, and delivery
+  details to the customer. Do not claim a purchase succeeded until the tool
+  returns `completed`.
+- `purchase_checkout` always requests a separate user approval form before it
+  signs. Never try to bypass a declined or unsupported approval request.
+- If a result is `payment_pending` or `paid_order_pending`, do not pay again.
+  Call `recover_checkout` with that intent ID until it reaches a final result.
+- After `purchase_checkout` or `recover_checkout` returns `completed`, call
+  `download_checkout_receipt` with the same intent ID if the customer requests
+  a receipt. Report the returned local file path; do not copy the PDF contents
+  into chat.
+- Never ask for, print, infer, or transmit the wallet secret.
+
+Before signing, the local guard restricts the transaction to USDC transfers
+from the burner wallet's associated token account, checks that their total
+matches the approved quote, and caps compute-budget fees. It does not
+independently allowlist the recipient token-account owners; it relies on the
+configured WRHSE/IVANA checkout services to build the payment. Keep this
+prototype on devnet with a low-funded burner wallet.
+
+## Available tools
+
+- `search_public_products`: browse approved public listings.
+- `prepare_checkout`: revalidates the products through WRHSE, creates a
+  server-priced quote, applies the per-checkout cap, and stores local recovery
+  state. The supplied `idempotencyKey` must remain the same for retries of the
+  same preparation request.
+- `purchase_checkout`: asks for MCP user approval, then signs and pays the
+  exact prepared intent.
+- `recover_checkout`: recovers an ambiguous payment or retries recording an
+  already-verified order. It never makes a new payment.
+- `download_checkout_receipt`: saves a PDF for a completed order to the
+  customer's `Downloads` folder. It includes a collection QR code when WRHSE
+  returned a collection code. The QR is a pickup credential: keep the PDF
+  private and share it only with the person collecting the order. This tool
+  never initiates or retries payment.
+
+Pending checkouts, their checkout tokens, and minimal customer details are
+stored in the current Windows user's Local AppData directory under
+`WRHSE\buyer-agent\pending-checkouts.json`. The file does not contain wallet
+private keys. Completed entries remain for idempotent tool retries; remove the
+file only after all pending purchases are resolved.
+
+## Test
+
+```powershell
+npm test
+```
+
+These tests use generated burner keys and mocked APIs; they do not contact a
+live WRHSE or IVANA service or broadcast transactions. The first end-to-end
+devnet purchase should be a separately approved, low-value transaction against
+a controlled listing.
