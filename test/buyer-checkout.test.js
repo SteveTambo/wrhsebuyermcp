@@ -59,7 +59,10 @@ function fixture({
     },
     async createIntent(input) {
       calls.createIntent += 1;
-      assert.equal(input.walletAddress, keypair.publicKey.toBase58());
+      // WRHSE pre-builds a transaction when walletAddress is present, which
+      // makes IVANA reject the build the checkout SDK performs at payment
+      // time. The wallet is bound by that later build instead.
+      assert.equal("walletAddress" in input, false);
       return {
         intentId: "intent-1",
         checkoutToken: "private-checkout-token",

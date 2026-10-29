@@ -34,10 +34,28 @@ const buyer = new BuyerCheckout({
   api,
   checkoutForIntent: async (intentId) => {
     const connection = connectionForIntent(intentId);
-    assertDevnetGenesis(
-      await connection.getGenesisHash(),
-      config.devnetGenesisHash,
-    );
+    let genesisHash;
+    try {
+      genesisHash = await connection.getGenesisHash();
+    } catch {
+      throw new BuyerApiError(
+        "Could not verify IVANA's checkout RPC network, so no payment was signed.",
+        503,
+        "RPC_UNAVAILABLE",
+      );
+    }
+    try {
+      assertDevnetGenesis(genesisHash, config.devnetGenesisHash);
+    } catch {
+      logError("devnet_check_failed", new Error("Checkout RPC is not devnet."), {
+        tool: "purchase_checkout",
+      });
+      throw new BuyerApiError(
+        "IVANA's checkout RPC is not connected to devnet, so no payment was signed.",
+        503,
+        "NOT_DEVNET",
+      );
+    }
     return createIvanaCheckout({
       connection,
       baseUrl: config.paymentsBaseUrl,

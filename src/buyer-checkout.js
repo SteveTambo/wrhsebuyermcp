@@ -208,6 +208,11 @@ export class BuyerCheckout {
       return this.#quoteResult(existing);
     }
 
+    // Do not send walletAddress here: WRHSE pre-builds a payment transaction
+    // whenever it is present, and IVANA then refuses the build that the
+    // checkout SDK performs at payment time ("A transaction was already
+    // issued"). IVANA binds the burner wallet when the SDK builds the
+    // transaction, before anything is signed.
     const intent = await this.api.createIntent({
       checkoutProtocol: 1,
       customer: normalizedCustomer,
@@ -215,7 +220,6 @@ export class BuyerCheckout {
       idempotencyKey,
       paymentMethod: "USDC",
       paymentChain: "solana",
-      walletAddress: this.keypair.publicKey.toBase58(),
     });
     const quote = quoteFrom(intent);
     const requestedItems = quoteItemsFor(selected);
@@ -293,6 +297,13 @@ export class BuyerCheckout {
           "This checkout cannot be paid again. Use recover_checkout or prepare a new checkout.",
           409,
           "CHECKOUT_NOT_PAYABLE",
+        );
+      }
+      if (entry.walletAddress !== this.keypair.publicKey.toBase58()) {
+        throw new BuyerApiError(
+          "This checkout was prepared for a different burner wallet. Prepare a new checkout.",
+          409,
+          "CHECKOUT_WALLET_MISMATCH",
         );
       }
       if (entry.expiresAt && Date.parse(entry.expiresAt) <= this.now()) {

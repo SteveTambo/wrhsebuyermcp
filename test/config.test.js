@@ -55,10 +55,15 @@ test("requires only WRHSE agent and burner-wallet keys", () => {
 });
 
 test("requires the local RPC connection to be on devnet", () => {
-  const expected = parseConfig(configEnv).devnetGenesisHash;
-  assertDevnetGenesis(expected);
+  // The literal Solana devnet genesis hash, so a typo in the constant cannot
+  // validate itself.
+  assertDevnetGenesis("EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG");
   assert.throws(
-    () => assertDevnetGenesis("mainnet-genesis"),
+    () => assertDevnetGenesis("5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"),
+    /not connected to devnet/,
+  );
+  assert.throws(
+    () => assertDevnetGenesis("4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY"),
     /not connected to devnet/,
   );
 });

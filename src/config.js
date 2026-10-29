@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1w5FQD3Rvt21";
+const DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 const DEFAULT_API_URL = "https://api.wrhse.top/api";
 const DEFAULT_PAYMENTS_URL = "https://ivanaservertenant.onrender.com/api";
 
