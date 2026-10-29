@@ -17,7 +17,7 @@ test("requires only WRHSE agent and burner-wallet keys", () => {
     WRHSE_BUYER_USDC_MINT: "obsolete-mint-override",
     WRHSE_BUYER_SOLANA_RPC_URL: "https://obsolete-rpc.example",
   });
-  assert.equal(parsed.maxUsdc, 5);
+  assert.equal(parsed.maxUsdc, 150);
   assert.equal(parsed.apiBaseUrl, "https://api.wrhse.top/api");
   assert.equal(
     parsed.paymentsBaseUrl,
@@ -27,6 +27,10 @@ test("requires only WRHSE agent and burner-wallet keys", () => {
   assert.equal("rpcUrl" in parsed, false);
   assert.equal(parsed.agentKey, configEnv.WRHSE_BUYER_AGENT_KEY);
   assert.equal("secretKey" in parsed, false);
+  assert.equal(
+    parseConfig({ ...configEnv, WRHSE_BUYER_MAX_USDC: "150" }).maxUsdc,
+    150,
+  );
 
   assert.throws(
     () =>
@@ -45,8 +49,8 @@ test("requires only WRHSE agent and burner-wallet keys", () => {
     /must not include a query or fragment/,
   );
   assert.throws(
-    () => parseConfig({ ...configEnv, WRHSE_BUYER_MAX_USDC: "1000" }),
-    /at most 100/,
+    () => parseConfig({ ...configEnv, WRHSE_BUYER_MAX_USDC: "151" }),
+    /at most 150/,
   );
 });
 

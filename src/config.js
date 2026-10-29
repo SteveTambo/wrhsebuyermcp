@@ -32,10 +32,10 @@ function requiredUrl(value, name, { allowHttpLocalhost = false } = {}) {
 }
 
 export function parseConfig(env = process.env) {
-  const maxUsdc = Number(env.WRHSE_BUYER_MAX_USDC ?? "5");
-  if (!Number.isFinite(maxUsdc) || maxUsdc <= 0 || maxUsdc > 100) {
+  const maxUsdc = Number(env.WRHSE_BUYER_MAX_USDC ?? "150");
+  if (!Number.isFinite(maxUsdc) || maxUsdc <= 0 || maxUsdc > 150) {
     throw new Error(
-      "WRHSE_BUYER_MAX_USDC must be greater than 0 and at most 100.",
+      "WRHSE_BUYER_MAX_USDC must be greater than 0 and at most 150.",
     );
   }
 

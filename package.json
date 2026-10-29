@@ -1,6 +1,6 @@
 {
   "name": "wrhse-buyer-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Customer-operated devnet buyer MCP for WRHSE checkout",
   "engines": {
@@ -10,7 +10,7 @@
     "src"
   ],
   "bin": {
-    "wrhse-buyer-mcp": "./src/cli.js"
+    "wrhse-buyer-mcp": "src/cli.js"
   },
   "publishConfig": {
     "access": "public"
