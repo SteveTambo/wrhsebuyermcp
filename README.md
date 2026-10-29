@@ -48,8 +48,8 @@ you can afford to lose. Restart the MCP client after changing variables. Do not
 use a production wallet or a key belonging to another person.
 
 Optional developer overrides are `WRHSE_BUYER_API_URL`,
-`WRHSE_BUYER_PAYMENTS_URL`, and `WRHSE_BUYER_MAX_USDC` (default 5 USDC, maximum
-100). Ordinary customers do not need to configure them.
+`WRHSE_BUYER_PAYMENTS_URL`, and `WRHSE_BUYER_MAX_USDC` (default 150 USDC, maximum
+150). Ordinary customers do not need to configure them.
 
 ## VS Code Copilot install
 
@@ -122,6 +122,11 @@ stored in the current Windows user's Local AppData directory under
 `WRHSE\buyer-agent\pending-checkouts.json`. The file does not contain wallet
 private keys. Completed entries remain for idempotent tool retries; remove the
 file only after all pending purchases are resolved.
+
+Buyer MCP errors are written as structured JSON lines to the process' stderr.
+In VS Code, inspect the buyer MCP server's channel in **View → Output**. Logs
+include the tool name and safe error diagnostics; authorization headers and
+token-like fields are redacted. Do not share logs without reviewing them first.
 
 ## Test
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BuyerApiError } from "./api.js";
+import { logError } from "./logging.js";
 
 function asToolResult(value) {
   return {
@@ -7,7 +8,8 @@ function asToolResult(value) {
   };
 }
 
-function asToolError(error) {
+function asToolError(tool, error) {
+  logError("tool_failed", error, { tool });
   const message =
     error instanceof BuyerApiError
       ? error.message
@@ -40,7 +42,7 @@ export function registerBuyerTools(server, buyer) {
       try {
         return asToolResult(await buyer.searchProducts(args));
       } catch (error) {
-        return asToolError(error);
+        return asToolError("search_public_products", error);
       }
     },
   );
@@ -88,7 +90,7 @@ export function registerBuyerTools(server, buyer) {
       try {
         return asToolResult(await buyer.prepareCheckout(args));
       } catch (error) {
-        return asToolError(error);
+        return asToolError("prepare_checkout", error);
       }
     },
   );
@@ -110,7 +112,7 @@ export function registerBuyerTools(server, buyer) {
       try {
         return asToolResult(await buyer.purchaseCheckout(intentId));
       } catch (error) {
-        return asToolError(error);
+        return asToolError("purchase_checkout", error);
       }
     },
   );
@@ -132,7 +134,7 @@ export function registerBuyerTools(server, buyer) {
       try {
         return asToolResult(await buyer.recoverCheckout(intentId));
       } catch (error) {
-        return asToolError(error);
+        return asToolError("recover_checkout", error);
       }
     },
   );
@@ -154,7 +156,7 @@ export function registerBuyerTools(server, buyer) {
       try {
         return asToolResult(await buyer.downloadReceipt(intentId));
       } catch (error) {
-        return asToolError(error);
+        return asToolError("download_checkout_receipt", error);
       }
     },
   );

@@ -4,6 +4,7 @@ import { Connection } from "@solana/web3.js";
 import { createIvanaCheckout } from "@habix/ivana-checkout";
 import { parseConfig, assertDevnetGenesis, checkoutRpcUrl } from "./config.js";
 import { BuyerApiError, createWrhseApi } from "./api.js";
+import { logError } from "./logging.js";
 import { BuyerCheckout } from "./buyer-checkout.js";
 import { createBalanceChecker } from "./balance-check.js";
 import { PendingCheckoutStore } from "./state-store.js";
@@ -92,7 +93,10 @@ const buyer = new BuyerCheckout({
         },
       });
       return result.action === "accept" && result.content?.approve === true;
-    } catch {
+    } catch (error) {
+      logError("approval_request_failed", error, {
+        tool: "purchase_checkout",
+      });
       throw new BuyerApiError(
         "The MCP client could not request user approval; no payment was signed or sent.",
         503,

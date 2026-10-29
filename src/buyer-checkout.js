@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import bs58 from "bs58";
 import { createLocalWallet } from "./wallet.js";
 import { BuyerApiError } from "./api.js";
+import { logError } from "./logging.js";
 import { saveCheckoutReceipt } from "./receipt.js";
 import { assertSafeCheckoutTransaction } from "./transaction-guard.js";
 
@@ -382,6 +383,10 @@ export class BuyerCheckout {
         await this.store.save(entry);
         return this.#recordOrder(entry);
       } catch (error) {
+        logError("payment_execution_failed", error, {
+          tool: "purchase_checkout",
+          intentId,
+        });
         if (error?.signature || entry.signature) {
           entry.signature = error.signature ?? entry.signature;
           entry.lastValidBlockHeight =
