@@ -29,6 +29,9 @@ function fixture({
   orderFailure = false,
   recovery = "completed",
   total = 4,
+  catalogTotal = total,
+  orderTotal = total,
+  maxUsdc = 5,
   saveReceipt = async (entry) => ({ status: "saved", orderId: entry.order.id }),
 } = {}) {
   const keypair = Keypair.generate();
@@ -73,7 +76,7 @@ function fixture({
             productId: 8,
             title: "Test shirt",
             quantity: 1,
-            unitPriceUsdc: total,
+            unitPriceUsdc: catalogTotal,
           },
         ],
       };
@@ -89,7 +92,7 @@ function fixture({
         });
       }
       return {
-        data: { id: 12, externalOrderId: "intent-1", totalAmount: total },
+        data: { id: 12, externalOrderId: "intent-1", totalAmount: orderTotal },
       };
     },
   };
@@ -146,7 +149,7 @@ function fixture({
     },
     wallet: keypair,
     store,
-    maxUsdc: 5,
+    maxUsdc,
     saveReceipt,
     checkFunds: async ({ intentId, mint }) => {
       assert.equal(intentId, "intent-1");
@@ -249,7 +252,28 @@ test("requires approval and only records one order after verified payment", asyn
   assert.equal(calls.recordOrder, 1);
 });
 
-test("receipt generation requires a completed checkout and uses the saved order", async () => {
+test("completed results distinguish the paid total from the order subtotal", async () => {
+  const { buyer } = fixture({
+    total: 5.29,
+    catalogTotal: 4.5,
+    orderTotal: 4.5,
+    maxUsdc: 6,
+  });
+  const quote = await prepare(buyer);
+  const result = await buyer.purchaseCheckout(quote.intentId);
+
+  assert.equal(quote.totalUsdc, 5.29);
+  assert.equal(result.status, "completed");
+  assert.equal(result.totalUsdc, 5.29);
+  assert.equal(result.orderSubtotalUsdc, 4.5);
+  assert.equal(result.totalAmount, 4.5);
+
+  const repeated = await buyer.purchaseCheckout(quote.intentId);
+  assert.equal(repeated.totalUsdc, 5.29);
+  assert.equal(repeated.orderSubtotalUsdc, 4.5);
+});
+
+test("checkout automatically saves one receipt and reuses it on receipt requests", async () => {
   const savedEntries = [];
   const { buyer, calls } = fixture({
     saveReceipt: async (entry) => {
@@ -262,7 +286,9 @@ test("receipt generation requires a completed checkout and uses the saved order"
   await assert.rejects(buyer.downloadReceipt(quote.intentId), /only after WRHSE confirms/);
   assert.equal(savedEntries.length, 0);
 
-  await buyer.purchaseCheckout(quote.intentId);
+  const completed = await buyer.purchaseCheckout(quote.intentId);
+  assert.deepEqual(completed.receipt, { status: "saved", orderId: 12 });
+  assert.equal(savedEntries.length, 1);
   const result = await buyer.downloadReceipt(quote.intentId);
   assert.deepEqual(result, { status: "saved", orderId: 12 });
   assert.equal(savedEntries.length, 1);
@@ -289,7 +315,13 @@ test("receipt save failures are explicit and do not retry payment", async () => 
     },
   });
   const quote = await prepare(buyer);
-  await buyer.purchaseCheckout(quote.intentId);
+  const completed = await buyer.purchaseCheckout(quote.intentId);
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.receipt.status, "failed");
+  assert.equal(
+    buyer.store.get(quote.intentId).status,
+    "completed",
+  );
 
   await assert.rejects(
     buyer.downloadReceipt(quote.intentId),
@@ -374,6 +406,7 @@ test("recovery records an already-completed payment without paying again", async
   await buyer.purchaseCheckout(quote.intentId);
   const recovered = await buyer.recoverCheckout(quote.intentId);
   assert.equal(recovered.status, "completed");
+  assert.equal(recovered.receipt.status, "saved");
   assert.equal(calls.pay, 1);
   assert.equal(calls.recordOrder, 1);
 });

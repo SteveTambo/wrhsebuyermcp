@@ -100,7 +100,7 @@ export function registerBuyerTools(server, buyer) {
     {
       title: "Pay for a WRHSE checkout",
       description:
-        "Pay one prepared checkout from the configured devnet burner wallet. Always triggers an explicit user-approval form showing the server-priced cart and total before signing. Requires a client that supports MCP elicitation; otherwise payment is refused.",
+        "Pay one prepared checkout from the configured devnet burner wallet. Always triggers an explicit user-approval form showing the server-priced cart and total before signing. After WRHSE confirms the order, automatically saves a local PDF receipt and includes its path in the result. Requires a client that supports MCP elicitation; otherwise payment is refused.",
       inputSchema: { intentId: z.string().trim().min(1).max(255) },
       annotations: {
         readOnlyHint: false,
@@ -144,7 +144,7 @@ export function registerBuyerTools(server, buyer) {
     {
       title: "Save a WRHSE checkout receipt",
       description:
-        "Generate a local PDF copy of a completed checkout and save it in the user's Downloads folder. Includes the WRHSE collection QR when the completed order has a collection code. Never creates or retries a payment.",
+        "Retry saving the local PDF receipt for a completed checkout if automatic receipt generation failed. Includes the WRHSE collection QR when the completed order has a collection code. Never creates or retries a payment.",
       inputSchema: { intentId: z.string().trim().min(1).max(255) },
       annotations: {
         readOnlyHint: false,

@@ -96,9 +96,7 @@ export async function saveCheckoutReceipt(
     throw new Error("A receipt can only be generated for a completed order.");
   }
   const items = productRows(entry.catalogItems);
-  const totalCents = Math.round(
-    Number(entry.order.totalAmount ?? entry.total) * 100,
-  );
+  const totalCents = Math.round(Number(entry.total) * 100);
   if (!Number.isInteger(totalCents) || totalCents <= 0) {
     throw new Error("The completed checkout has an invalid paid total.");
   }

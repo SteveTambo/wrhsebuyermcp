@@ -10,7 +10,7 @@ function completedEntry(overrides = {}) {
     status: "completed",
     intentId: "intent-1",
     createdAt: "2025-01-02T03:04:05.000Z",
-    total: 99,
+    total: 23.52,
     catalogItems: [
       {
         productId: 8,
@@ -23,7 +23,7 @@ function completedEntry(overrides = {}) {
     signature: "transaction-signature",
     order: {
       id: "../unsafe/order-id",
-      totalAmount: 23.52,
+      totalAmount: 20,
       paymentMethod: "USDC",
       collectionCode: "pickup-code",
       completedAt: "2025-01-02T03:05:00.000Z",
@@ -61,7 +61,7 @@ test("saves a receipt without a QR when no collection code exists", async (t) =>
     completedEntry({
       order: {
         id: 12,
-        totalAmount: 23.52,
+        totalAmount: 20,
         paymentMethod: "USDC",
         collectionCode: null,
       },

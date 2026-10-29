@@ -492,15 +492,35 @@ export class BuyerCheckout {
         "RECEIPT_NOT_AVAILABLE",
       );
     }
-    try {
-      return await this.saveReceipt(entry);
-    } catch (error) {
-      if (error instanceof BuyerApiError) throw error;
+    const receipt = await this.#ensureReceipt(entry);
+    if (receipt.status !== "saved") {
       throw new BuyerApiError(
         "The local receipt could not be generated or saved. Check that the Downloads folder is writable and the completed order data is valid, then retry download_checkout_receipt. No payment was attempted.",
         500,
         "RECEIPT_SAVE_FAILED",
       );
+    }
+    return receipt;
+  }
+
+  async #ensureReceipt(entry) {
+    if (entry.receipt?.status === "saved") return entry.receipt;
+    try {
+      const receipt = await this.saveReceipt(entry);
+      entry.receipt = receipt;
+      await this.store.save(entry);
+      return receipt;
+    } catch (error) {
+      logError("receipt_generation_failed", error, {
+        tool: "purchase_checkout",
+        intentId: entry.intentId,
+      });
+      return {
+        status: "failed",
+        code: "RECEIPT_SAVE_FAILED",
+        message:
+          "The order is complete, but its local PDF receipt could not be saved. No payment was attempted; retry download_checkout_receipt.",
+      };
     }
   }
 
@@ -571,8 +591,16 @@ export class BuyerCheckout {
     };
   }
 
-  #completedResult(entry) {
-    return { status: "completed", intentId: entry.intentId, ...entry.order };
+  async #completedResult(entry) {
+    const receipt = await this.#ensureReceipt(entry);
+    return {
+      status: "completed",
+      intentId: entry.intentId,
+      ...entry.order,
+      totalUsdc: entry.total,
+      orderSubtotalUsdc: entry.order.totalAmount,
+      receipt,
+    };
   }
 
   async #withLock(intentId, task) {

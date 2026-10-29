@@ -83,14 +83,19 @@ Give the agent these rules, without including the secret:
 - Show the returned products, server-priced total, wallet address, and delivery
   details to the customer. Do not claim a purchase succeeded until the tool
   returns `completed`.
+- For completed results, report `totalUsdc` as the full quoted amount paid.
+  `orderSubtotalUsdc` and the legacy `totalAmount` field are the merchandise
+  subtotal recorded on the WRHSE order, before VAT and transaction fees.
+- After WRHSE confirms an order, `purchase_checkout` and `recover_checkout`
+  automatically save a local PDF receipt and return its result in `receipt`.
+  Report the receipt path when saved; use `download_checkout_receipt` only to
+  retry if automatic receipt generation failed.
 - `purchase_checkout` always requests a separate user approval form before it
   signs. Never try to bypass a declined or unsupported approval request.
 - If a result is `payment_pending` or `paid_order_pending`, do not pay again.
   Call `recover_checkout` with that intent ID until it reaches a final result.
-- After `purchase_checkout` or `recover_checkout` returns `completed`, call
-  `download_checkout_receipt` with the same intent ID if the customer requests
-  a receipt. Report the returned local file path; do not copy the PDF contents
-  into chat.
+- The completed purchase result includes the automatically saved receipt path.
+  Do not copy the PDF contents into chat.
 - Never ask for, print, infer, or transmit the wallet secret.
 
 Before signing, the local guard restricts the transaction to USDC transfers
@@ -108,14 +113,15 @@ prototype on devnet with a low-funded burner wallet.
   state. The supplied `idempotencyKey` must remain the same for retries of the
   same preparation request.
 - `purchase_checkout`: asks for MCP user approval, then signs and pays the
-  exact prepared intent.
+  exact prepared intent. After WRHSE confirms the order, it automatically saves
+  a receipt and returns its path in the result.
 - `recover_checkout`: recovers an ambiguous payment or retries recording an
   already-verified order. It never makes a new payment.
-- `download_checkout_receipt`: saves a PDF for a completed order to the
-  customer's `Downloads` folder. It includes a collection QR code when WRHSE
-  returned a collection code. The QR is a pickup credential: keep the PDF
-  private and share it only with the person collecting the order. This tool
-  never initiates or retries payment.
+- `download_checkout_receipt`: retries saving a PDF when automatic receipt
+  generation failed. The PDF includes a collection QR code when WRHSE returned
+  a collection code. The QR is a pickup credential: keep the PDF private and
+  share it only with the person collecting the order. This tool never initiates
+  or retries payment.
 
 Pending checkouts, their checkout tokens, and minimal customer details are
 stored in the current Windows user's Local AppData directory under
