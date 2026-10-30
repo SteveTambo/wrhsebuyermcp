@@ -51,6 +51,11 @@ test("saves a completed checkout PDF with its collection QR locally", async (t) 
   assert.match(contents, /\/Subtype\s*\/Image/);
   assert.match(contents, /23\.52 USDC/);
   assert.match(contents, /Test shirt/);
+  assert.match(
+    contents,
+    /https:\/\/solscan\.io\/tx\/transaction-signature\?cluster=devnet/,
+  );
+  assert.match(contents, /\/Annots\b/);
 });
 
 test("saves a receipt without a QR when no collection code exists", async (t) => {
@@ -80,10 +85,9 @@ test("does not create receipts for incomplete checkouts", async (t) => {
   t.after(() => rm(downloadsDirectory, { recursive: true, force: true }));
 
   await assert.rejects(
-    saveCheckoutReceipt(
-      completedEntry({ status: "payment_pending" }),
-      { downloadsDirectory },
-    ),
+    saveCheckoutReceipt(completedEntry({ status: "payment_pending" }), {
+      downloadsDirectory,
+    }),
     /only be generated for a completed order/,
   );
 });

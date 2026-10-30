@@ -1,13 +1,16 @@
 {
   "name": "wrhse-buyer-mcp",
-  "version": "0.1.5",
+  "version": "0.1.6",
+  "license": "MIT",
   "type": "module",
   "description": "Customer-operated devnet buyer MCP for WRHSE checkout",
   "engines": {
     "node": ">=22.0.0"
   },
   "files": [
-    "src"
+    "src",
+    "README.md",
+    "LICENSE"
   ],
   "bin": {
     "wrhse-buyer-mcp": "src/cli.js"
@@ -17,7 +20,8 @@
   },
   "scripts": {
     "start": "node src/main.js",
-    "test": "node --test"
+    "test": "node --test",
+    "prepublishOnly": "npm test"
   },
   "dependencies": {
     "@habix/ivana-checkout": "0.5.1",

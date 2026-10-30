@@ -69,7 +69,11 @@ function drawFooter(doc, pageNumber, totalPages) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
   doc.setTextColor(230, 230, 230);
-  doc.text("Keep the collection QR private. Questions? Contact the seller.", LEFT, FOOTER_Y + 7.5);
+  doc.text(
+    "Keep the collection QR private. Questions? Contact the seller.",
+    LEFT,
+    FOOTER_Y + 7.5,
+  );
   doc.text(`${pageNumber} / ${totalPages}`, RIGHT, FOOTER_Y + 7.5, {
     align: "right",
   });
@@ -107,8 +111,7 @@ export async function saveCheckoutReceipt(
   );
   const vatCents = Math.round(subtotalCents * VAT_RATE);
   const feeCents = Math.round(subtotalCents * TRANSACTION_FEE_RATE);
-  const hasKnownBreakdown =
-    subtotalCents + vatCents + feeCents === totalCents;
+  const hasKnownBreakdown = subtotalCents + vatCents + feeCents === totalCents;
   const customer = entry.customer ?? {};
   const rawOrderId = entry.order.id ?? entry.intentId;
   const orderId = rawOrderId == null ? "" : text(String(rawOrderId));
@@ -161,7 +164,12 @@ export async function saveCheckoutReceipt(
   drawSectionTitle("ORDER DETAILS");
   const details = [
     ["Order", orderId],
-    ["Date", Number.isNaN(completedDate.getTime()) ? "Not available" : completedDate.toLocaleString()],
+    [
+      "Date",
+      Number.isNaN(completedDate.getTime())
+        ? "Not available"
+        : completedDate.toLocaleString(),
+    ],
     ["Payment", text(entry.order.paymentMethod) || "USDC"],
   ];
   for (const [label, value] of details) {
@@ -251,13 +259,22 @@ export async function saveCheckoutReceipt(
   y += 10;
 
   if (signature) {
-    ensureRoom(22);
+    const paymentUrl = new URL(
+      `/tx/${encodeURIComponent(signature)}`,
+      "https://solscan.io",
+    );
+    paymentUrl.searchParams.set("cluster", "devnet");
+    const linkLines = doc.splitTextToSize(paymentUrl.toString(), RIGHT - LEFT);
+    ensureRoom(10 + linkLines.length * 4);
     drawSectionTitle("PAYMENT REFERENCE");
-    doc.setFont("courier", "normal");
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
-    doc.setTextColor(75, 75, 75);
-    doc.text(doc.splitTextToSize(signature, RIGHT - LEFT), LEFT, y);
-    y += 10;
+    doc.setTextColor(0, 77, 153);
+    doc.text(linkLines, LEFT, y);
+    doc.link(LEFT, y - 3, RIGHT - LEFT, linkLines.length * 4, {
+      url: paymentUrl.toString(),
+    });
+    y += linkLines.length * 4 + 3;
   }
 
   let qrIncluded = false;
@@ -291,10 +308,7 @@ export async function saveCheckoutReceipt(
 
   const filenameId = orderId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80);
   if (!filenameId) throw new Error("The completed order ID is invalid.");
-  const filePath = join(
-    downloadsDirectory,
-    `wrhse-receipt-${filenameId}.pdf`,
-  );
+  const filePath = join(downloadsDirectory, `wrhse-receipt-${filenameId}.pdf`);
   await mkdir(downloadsDirectory, { recursive: true, mode: 0o700 });
   await writeFile(filePath, new Uint8Array(doc.output("arraybuffer")), {
     mode: 0o600,

@@ -118,10 +118,10 @@ prototype on devnet with a low-funded burner wallet.
 - `recover_checkout`: recovers an ambiguous payment or retries recording an
   already-verified order. It never makes a new payment.
 - `download_checkout_receipt`: retries saving a PDF when automatic receipt
-  generation failed. The PDF includes a collection QR code when WRHSE returned
-  a collection code. The QR is a pickup credential: keep the PDF private and
-  share it only with the person collecting the order. This tool never initiates
-  or retries payment.
+  generation failed. The PDF includes a clickable Solscan devnet transaction
+  link and a collection QR code when WRHSE returned a collection code. The QR
+  is a pickup credential: keep the PDF private and share it only with the
+  person collecting the order. This tool never initiates or retries payment.
 
 Pending checkouts, their checkout tokens, and minimal customer details are
 stored in the current Windows user's Local AppData directory under
