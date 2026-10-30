@@ -25,6 +25,8 @@ function fixture({
   approvalError,
   fundsError,
   payResult,
+  failAfterSign,
+  rejectedPayResult,
   verificationSuccess = true,
   orderFailure = false,
   recovery = "completed",
@@ -102,7 +104,7 @@ function fixture({
     async getPaymentIntent() {
       return { status: "created", total, expiresAt: future() };
     },
-    async pay({ wallet, onSignature }) {
+    async pay({ wallet, onSignature, onRejected }) {
       calls.pay += 1;
       if (payResult instanceof Error) throw payResult;
       const tx = new Transaction({
@@ -130,11 +132,16 @@ function fixture({
         ),
       );
       await wallet.signTransaction(tx);
+      if (failAfterSign instanceof Error) throw failAfterSign;
       const signature = bs58.encode(tx.signature);
       await onSignature(signature, {
         blockhash: tx.recentBlockhash,
         lastValidBlockHeight: 100,
       });
+      if (rejectedPayResult instanceof Error) {
+        await onRejected?.();
+        throw rejectedPayResult;
+      }
       return { signature, verification: { success: verificationSuccess } };
     },
     async recoverPayment() {
@@ -655,6 +662,40 @@ test("cannot pay when approval or a balance check fails", async () => {
     insufficientFunds.buyer.store.get(fundsQuote.intentId).signature,
     undefined,
   );
+});
+
+test("a signed attempt rejected before registration is not treated as pending", async () => {
+  const { buyer } = fixture({
+    failAfterSign: Object.assign(new Error("attempt registration failed"), {
+      code: "ATTEMPT_NOT_REGISTERED",
+    }),
+  });
+  const quote = await prepare(buyer);
+
+  const result = await buyer.purchaseCheckout(quote.intentId);
+
+  assert.equal(result.status, "payment_failed");
+  assert.equal(result.code, "ATTEMPT_NOT_REGISTERED");
+  assert.match(result.message, /No payment transaction was broadcast/);
+  assert.equal(result.checkoutExpiresAt, quote.expiresAt);
+  assert.equal(buyer.store.get(quote.intentId).signature, undefined);
+});
+
+test("a definitive node refusal clears the saved signature and reports the seat hold", async () => {
+  const { buyer } = fixture({
+    rejectedPayResult: Object.assign(new Error("node refused transaction"), {
+      code: "SEND_FAILED",
+    }),
+  });
+  const quote = await prepare(buyer);
+
+  const result = await buyer.purchaseCheckout(quote.intentId);
+
+  assert.equal(result.status, "payment_failed");
+  assert.equal(result.code, "SEND_FAILED");
+  assert.match(result.message, /rejected the transaction before broadcasting/);
+  assert.match(result.message, /seat hold/);
+  assert.equal(buyer.store.get(quote.intentId).signature, undefined);
 });
 
 test("unverified payment remains pending and is never paid twice", async () => {

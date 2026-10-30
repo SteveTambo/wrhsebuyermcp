@@ -613,6 +613,8 @@ export class BuyerCheckout {
 
       entry.status = "paying";
       await this.store.save(entry);
+      let signedSignature;
+      let paymentRejected = false;
       const wallet = createLocalWallet(this.keypair, {
         validateTransaction: async (transaction) => {
           const paymentMint = assertSafeCheckoutTransaction(transaction, {
@@ -627,10 +629,7 @@ export class BuyerCheckout {
           });
         },
         afterSign: async (transaction) => {
-          entry.signature = bs58.encode(transaction.signature);
-          entry.lastValidBlockHeight = null;
-          entry.status = "payment_pending";
-          await this.store.save(entry);
+          signedSignature = bs58.encode(transaction.signature);
         },
       });
 
@@ -640,13 +639,29 @@ export class BuyerCheckout {
           wallet,
           paymentMethod: "USDC",
           onSignature: async (signature, blockhash) => {
-            if (entry.signature !== signature) {
+            if (signedSignature !== signature) {
               throw new Error(
                 "The signed transaction signature did not match.",
               );
             }
+            entry.signature = signature;
             entry.lastValidBlockHeight = blockhash.lastValidBlockHeight;
             entry.status = "payment_pending";
+            await this.store.save(entry);
+          },
+          onRetry: async () => {
+            signedSignature = undefined;
+            entry.signature = undefined;
+            entry.lastValidBlockHeight = null;
+            entry.status = "paying";
+            await this.store.save(entry);
+          },
+          onRejected: async () => {
+            paymentRejected = true;
+            signedSignature = undefined;
+            entry.signature = undefined;
+            entry.lastValidBlockHeight = null;
+            entry.status = "payment_failed";
             await this.store.save(entry);
           },
         });
@@ -689,10 +704,12 @@ export class BuyerCheckout {
         await this.store.save(entry);
         return {
           status: "payment_failed",
-          message:
-            "No payment was confirmed. Prepare a new checkout before trying again.",
+          message: paymentRejected
+            ? "The Solana node rejected the transaction before broadcasting it, so no payment was sent. This checkout cannot be paid again. WRHSE may keep its cinema seat hold until the payment window expires and on-chain checks confirm it is safe to release. Refresh availability before choosing seats again; if the hold remains, wait for WRHSE to clear it."
+            : "No payment transaction was broadcast, so no payment was sent. This checkout cannot be paid again. WRHSE may keep its cinema seat hold until the payment window expires and on-chain checks confirm it is safe to release. Refresh availability before choosing seats again; if the hold remains, wait for WRHSE to clear it.",
           code: typeof error?.code === "string" ? error.code : "PAYMENT_FAILED",
           intentId,
+          checkoutExpiresAt: entry.expiresAt,
         };
       }
     });

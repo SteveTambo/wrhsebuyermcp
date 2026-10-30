@@ -175,7 +175,7 @@ export function registerBuyerTools(server, buyer) {
     {
       title: "Pay for a WRHSE checkout",
       description:
-        "Pay one prepared checkout from the configured devnet burner wallet. Always triggers an explicit user-approval form showing the server-priced cart and total before signing. After WRHSE confirms the order, automatically saves a local PDF receipt and includes its path in the result. Requires a client that supports MCP elicitation; otherwise payment is refused.",
+        "Pay one prepared checkout from the configured devnet burner wallet. Always triggers an explicit user-approval form showing the server-priced cart and total before signing. After WRHSE confirms the order, automatically saves a local PDF receipt and includes its path in the result. If payment_failed is returned, no transaction was broadcast, but cinema seats may remain held until WRHSE completes its safe-release checks; refresh availability before choosing again. Requires a client that supports MCP elicitation; otherwise payment is refused.",
       inputSchema: { intentId: z.string().trim().min(1).max(255) },
       annotations: {
         readOnlyHint: false,
