@@ -52,6 +52,53 @@ test("accepts only a burner-funded USDC transfer matching the quote", () => {
   );
 });
 
+test("accepts cinema inventory reference as an extra read-only transfer account", () => {
+  const wallet = Keypair.generate();
+  const mint = Keypair.generate().publicKey;
+  const transaction = paymentTransaction({ wallet, mint });
+  const transfer = transaction.instructions.find((instruction) =>
+    instruction.programId.equals(TOKEN_PROGRAM_ID),
+  );
+  transfer.keys.push({
+    pubkey: Keypair.generate().publicKey,
+    isSigner: false,
+    isWritable: false,
+  });
+
+  assert.equal(
+    assertSafeCheckoutTransaction(transaction, {
+      walletAddress: wallet.publicKey,
+      totalUsdc: 4,
+    }).toBase58(),
+    mint.toBase58(),
+  );
+});
+
+test("rejects extra transfer accounts that are signers or writable", () => {
+  const wallet = Keypair.generate();
+  const mint = Keypair.generate().publicKey;
+
+  for (const meta of [
+    { isSigner: true, isWritable: false },
+    { isSigner: false, isWritable: true },
+  ]) {
+    const transaction = paymentTransaction({ wallet, mint });
+    const transfer = transaction.instructions.find((instruction) =>
+      instruction.programId.equals(TOKEN_PROGRAM_ID),
+    );
+    transfer.keys.push({ pubkey: Keypair.generate().publicKey, ...meta });
+
+    assert.throws(
+      () =>
+        assertSafeCheckoutTransaction(transaction, {
+          walletAddress: wallet.publicKey,
+          totalUsdc: 4,
+        }),
+      /unexpected account/,
+    );
+  }
+});
+
 test("rejects wrong totals, non-USDC instructions, and unsafe compute fees", () => {
   const wallet = Keypair.generate();
   const mint = Keypair.generate().publicKey;

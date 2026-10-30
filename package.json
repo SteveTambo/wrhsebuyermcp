@@ -1,6 +1,6 @@
 {
   "name": "wrhse-buyer-mcp",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "license": "MIT",
   "type": "module",
   "description": "Customer-operated devnet buyer MCP for WRHSE checkout",

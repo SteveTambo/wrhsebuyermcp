@@ -92,7 +92,7 @@ export function assertSafeCheckoutTransaction(
       if (
         !decoded.keys.source.pubkey.equals(source) ||
         !decoded.keys.owner.pubkey.equals(walletAddress) ||
-        decoded.keys.multiSigners.length !== 0 ||
+        decoded.keys.multiSigners.some((key) => key.isSigner || key.isWritable) ||
         decoded.data.amount <= 0n
       ) {
         throw new Error("The checkout transfers from an unexpected account.");
