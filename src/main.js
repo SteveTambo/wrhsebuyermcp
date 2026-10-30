@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Connection } from "@solana/web3.js";
 import { createIvanaCheckout } from "@habix/ivana-checkout";
+import { readFile } from "node:fs/promises";
 import { parseConfig, assertDevnetGenesis, checkoutRpcUrl } from "./config.js";
 import { BuyerApiError, createWrhseApi } from "./api.js";
 import { logError } from "./logging.js";
@@ -12,6 +13,9 @@ import { loadBurnerWallet } from "./wallet.js";
 import { registerBuyerTools } from "./tools.js";
 
 const config = parseConfig();
+const packageJson = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+);
 let encodedSecret = process.env.WRHSE_BUYER_SOLANA_SECRET_KEY;
 delete process.env.WRHSE_BUYER_SOLANA_SECRET_KEY;
 const keypair = loadBurnerWallet(encodedSecret);
@@ -27,7 +31,7 @@ await store.load();
 
 const server = new McpServer({
   name: "wrhse-buyer",
-  version: "0.1.0",
+  version: packageJson.version,
 });
 
 const buyer = new BuyerCheckout({
@@ -68,10 +72,13 @@ const buyer = new BuyerCheckout({
     createBalanceChecker(connectionForIntent(intentId))(balance),
   requestApproval: async (entry) => {
     const itemLines = entry.catalogItems
-      .map(
-        (item) =>
-          `- ${item.title ?? `Product ${item.productId}`} × ${item.quantity}`,
-      )
+      .map((item) => {
+        const title = item.title ?? `Product ${item.productId}`;
+        const seats = item.seatIds?.length
+          ? ` (Seats: ${item.seatIds.join(", ")})`
+          : "";
+        return `- ${title} × ${item.quantity}${seats}`;
+      })
       .join("\n");
     const customer = [
       entry.customer.name,
@@ -95,6 +102,7 @@ const buyer = new BuyerCheckout({
           `Deliver to: ${customer || "No delivery details supplied"}`,
           `Quote expires: ${entry.expiresAt ?? "as determined by the payment service"}`,
           "Decline if anything is incorrect. WRHSE will not receive the wallet key.",
+          "If this order includes tickets, the private local PDF receipt contains the admission QR codes. Do not copy ticket codes or QR contents into chat.",
         ].join("\n\n"),
         requestedSchema: {
           type: "object",

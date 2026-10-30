@@ -7,9 +7,12 @@ that local process; WRHSE and IVANA receive only the public address and signed
 transaction. The existing WRHSE agent key authorizes intent creation through
 the new `checkout:purchase` permission; it never signs or pays.
 
-The initial test flow supports USDC purchases of public, non-ticket products
-from one store. It does not support cinema/ticket checkouts, donations, EVM,
-HBX, user-wallet delegation, unattended payments, or production networks.
+The initial test flow supports USDC purchases of public products from one
+store, including event tickets and cinema screenings. Cinema screenings with
+reserved seating require one available seat ID per ticket; general-admission
+screenings use ticket quantities. A cinema screening must be checked out by
+itself. The flow does not support donations, EVM, HBX, user-wallet delegation,
+unattended payments, or production networks.
 
 ## Requirements
 
@@ -79,7 +82,9 @@ Give the agent these rules, without including the secret:
 
 - Use only `search_public_products` to discover products, then
   `prepare_checkout` with the customer's actual product choices and delivery
-  details.
+  details. For reserved-seat cinema, use the returned screening seat map and
+  pass one available `seatIds` value per ticket. Do not invent seats; the server
+  checks availability again while placing the hold.
 - Show the returned products, server-priced total, wallet address, and delivery
   details to the customer. Do not claim a purchase succeeded until the tool
   returns `completed`.
@@ -88,6 +93,7 @@ Give the agent these rules, without including the secret:
   subtotal recorded on the WRHSE order, before VAT and transaction fees.
 - After WRHSE confirms an order, `purchase_checkout` and `recover_checkout`
   automatically save a local PDF receipt and return its result in `receipt`.
+  For event/cinema orders, this PDF contains the ticket QR codes.
   Report the receipt path when saved; use `download_checkout_receipt` only to
   retry if automatic receipt generation failed.
 - `purchase_checkout` always requests a separate user approval form before it
@@ -95,7 +101,9 @@ Give the agent these rules, without including the secret:
 - If a result is `payment_pending` or `paid_order_pending`, do not pay again.
   Call `recover_checkout` with that intent ID until it reaches a final result.
 - The completed purchase result includes the automatically saved receipt path.
-  Do not copy the PDF contents into chat.
+  Do not copy the PDF contents or any ticket code/QR contents into chat. Ticket
+  QR codes are one-time admission credentials; share the PDF privately only
+  with people authorized to use every credential it contains.
 - Never ask for, print, infer, or transmit the wallet secret.
 
 Before signing, the local guard restricts the transaction to USDC transfers
@@ -107,27 +115,33 @@ prototype on devnet with a low-funded burner wallet.
 
 ## Available tools
 
-- `search_public_products`: browse approved public listings.
+- `search_public_products`: browse approved public listings, including event
+  and cinema screening details when available.
 - `prepare_checkout`: revalidates the products through WRHSE, creates a
   server-priced quote, applies the per-checkout cap, and stores local recovery
-  state. The supplied `idempotencyKey` must remain the same for retries of the
-  same preparation request.
+  state. For reserved-seat cinema, provide one seat ID per ticket; seats are
+  held by WRHSE when it creates the intent. The supplied `idempotencyKey` must
+  remain the same for retries of the same preparation request.
 - `purchase_checkout`: asks for MCP user approval, then signs and pays the
   exact prepared intent. After WRHSE confirms the order, it automatically saves
-  a receipt and returns its path in the result.
+  a receipt and returns its path in the result. Ticket orders include
+  individual admission QR codes in that private local PDF.
 - `recover_checkout`: recovers an ambiguous payment or retries recording an
   already-verified order. It never makes a new payment.
 - `download_checkout_receipt`: retries saving a PDF when automatic receipt
   generation failed. The PDF includes a clickable Solscan devnet transaction
-  link and a collection QR code when WRHSE returned a collection code. The QR
-  is a pickup credential: keep the PDF private and share it only with the
-  person collecting the order. This tool never initiates or retries payment.
+  link, a collection QR code when WRHSE returned a collection code, and
+  individual ticket QR codes for admissions. These are credentials: keep the
+  PDF private and share it only with people authorized to use every credential
+  it contains. This tool never initiates or retries payment.
 
 Pending checkouts, their checkout tokens, and minimal customer details are
 stored in the current Windows user's Local AppData directory under
 `WRHSE\buyer-agent\pending-checkouts.json`. The file does not contain wallet
-private keys. Completed entries remain for idempotent tool retries; remove the
-file only after all pending purchases are resolved.
+private keys, but completed ticket orders include ticket codes so the PDF can
+be regenerated after a restart. Treat this file as sensitive and do not share
+it. Completed entries remain for idempotent tool retries; remove the file only
+after all pending purchases are resolved.
 
 Buyer MCP errors are written as structured JSON lines to the process' stderr.
 In VS Code, inspect the buyer MCP server's channel in **View → Output**. Logs

@@ -9,6 +9,41 @@ import { assertSafeCheckoutTransaction } from "./transaction-guard.js";
 const MAX_LINES = 20;
 const MAX_QUANTITY = 20;
 const MAX_LINE_QUANTITY = 10;
+const MAX_CINEMA_SEATS = 10;
+const SEAT_ID = /^[A-Z](?:[1-9]|[1-3][0-9]|40)$/;
+
+function seatExists(seating, id) {
+  const match = /^([A-Z])(\d+)$/.exec(id);
+  return (
+    Boolean(match) &&
+    match[1].charCodeAt(0) - 65 < seating.rows &&
+    Number(match[2]) <= seating.seatsPerRow
+  );
+}
+
+function ticketDetails(product) {
+  return {
+    ...(product.admissionKind ? { admissionKind: product.admissionKind } : {}),
+    ...(product.eventStage ? { eventStage: product.eventStage } : {}),
+    ...(product.eventDate ? { eventDate: product.eventDate } : {}),
+    ...(product.cinemaScreening
+      ? {
+          cinemaScreening: {
+            movieTitle: product.cinemaScreening.movieTitle,
+            auditorium: product.cinemaScreening.auditorium,
+            venueAddress: product.cinemaScreening.venueAddress,
+            timezone: product.cinemaScreening.timezone,
+            startsAt: product.cinemaScreening.startsAt,
+            endsAt: product.cinemaScreening.endsAt,
+            salesCloseAt: product.cinemaScreening.salesCloseAt,
+            seating: product.cinemaScreening.seating,
+            takenSeats: product.cinemaScreening.takenSeats,
+            quantity: product.quantity,
+          },
+        }
+      : {}),
+  };
+}
 
 function validCustomer(customer) {
   const result = {};
@@ -120,16 +155,23 @@ export class BuyerCheckout {
       query: query.trim().slice(0, 100),
       buyerCountry: buyerCountry?.toUpperCase(),
     });
-    return results.slice(0, 10).map((product) => ({
-      id: product.id,
-      title: product.title,
-      price: product.price,
-      quantity: product.quantity,
-      sizes: product.sizes,
-      tenantSlug: product.tenantSlug,
-      storeName: product.store?.name,
-      area: product.area?.name,
-    }));
+    return Promise.all(
+      results.slice(0, 10).map(async (product) => {
+        const detail = await this.api.getProduct(product.id);
+        const current = detail?.data;
+        return {
+          id: product.id,
+          title: product.title,
+          price: product.price,
+          quantity: current?.quantity ?? product.quantity,
+          sizes: current?.sizes ?? product.sizes,
+          tenantSlug: product.tenantSlug,
+          storeName: product.store?.name,
+          area: product.area?.name,
+          ...(current ? ticketDetails(current) : {}),
+        };
+      }),
+    );
   }
 
   async prepareCheckout({ items, customer, idempotencyKey }) {
@@ -149,11 +191,28 @@ export class BuyerCheckout {
     }
 
     const normalizedCustomer = validCustomer(customer);
-    const selected = items.map(({ productId, quantity, size }) => ({
-      productId,
-      quantity,
-      ...(size ? { size: size.trim() } : {}),
-    }));
+    const selected = items.map(({ productId, quantity, size, seatIds }) => {
+      if (
+        seatIds !== undefined &&
+        (!Array.isArray(seatIds) ||
+          seatIds.length > MAX_CINEMA_SEATS ||
+          seatIds.some(
+            (seat) => typeof seat !== "string" || !SEAT_ID.test(seat),
+          ))
+      ) {
+        throw new BuyerApiError(
+          "Cinema seat IDs must use a valid row and seat number.",
+          400,
+          "CINEMA_SEATS_INVALID",
+        );
+      }
+      return {
+        productId,
+        quantity,
+        ...(size ? { size: size.trim() } : {}),
+        ...(seatIds?.length ? { seatIds: [...seatIds] } : {}),
+      };
+    });
     const productDetails = await Promise.all(
       selected.map(async (item) => {
         const result = await this.api.getProduct(item.productId);
@@ -167,17 +226,75 @@ export class BuyerCheckout {
           product.id !== selected[index].productId ||
           product.isDraft ||
           product.archivedAt ||
-          product.admissionKind ||
-          product.eventStage ||
-          product.cinema ||
+          (product.admissionKind != null &&
+            product.admissionKind !== "CINEMA" &&
+            product.eventStage == null) ||
+          product.eventStage === "sold_out" ||
+          (product.admissionKind === "CINEMA" && !product.cinemaScreening) ||
           (Array.isArray(product.acceptedPaymentMethods) &&
             !product.acceptedPaymentMethods.includes("USDC")),
       )
     ) {
       throw new BuyerApiError(
-        "Only currently available non-ticket products are supported in this test flow.",
+        "Only currently available products with supported WRHSE checkout details can be purchased.",
         400,
         "UNSUPPORTED_PRODUCT",
+      );
+    }
+    const cinemaProducts = productDetails.filter(
+      (product) => product.admissionKind === "CINEMA",
+    );
+    if (
+      cinemaProducts.length &&
+      new Set(selected.map((item) => item.productId)).size !== 1
+    ) {
+      throw new BuyerApiError(
+        "Buy one cinema screening per ticket checkout. Food needs a separate order.",
+        400,
+        "CINEMA_SEPARATE_CHECKOUT",
+      );
+    }
+    const suppliedSeats = selected.flatMap((item) => item.seatIds ?? []);
+    if (cinemaProducts.length) {
+      const screening = cinemaProducts[0].cinemaScreening;
+      if (screening.seating) {
+        if (
+          suppliedSeats.length !== totalQuantity(selected) ||
+          suppliedSeats.length > MAX_CINEMA_SEATS ||
+          new Set(suppliedSeats).size !== suppliedSeats.length ||
+          suppliedSeats.some((seat) => !seatExists(screening.seating, seat))
+        ) {
+          throw new BuyerApiError(
+            "Choose one unique seat for each cinema ticket (up to 10 seats).",
+            400,
+            "CINEMA_SEATS_INVALID",
+          );
+        }
+        const takenSeats = Array.isArray(screening.takenSeats)
+          ? new Set(screening.takenSeats)
+          : null;
+        if (
+          takenSeats &&
+          suppliedSeats.some((seat) => takenSeats.has(seat))
+        ) {
+          throw new BuyerApiError(
+            "Some selected cinema seats are no longer available. Choose different seats.",
+            409,
+            "CINEMA_SEAT_TAKEN",
+          );
+        }
+      } else if (suppliedSeats.length) {
+        throw new BuyerApiError(
+          "This cinema screening does not have reserved seating.",
+          400,
+          "CINEMA_SEATS_INVALID",
+        );
+      }
+    } else if (suppliedSeats.length) {
+      throw new BuyerApiError(
+        "Seat IDs can only be used for a reserved-seat cinema screening.",
+        400,
+        "CINEMA_SEATS_INVALID",
       );
     }
     const storeSlugs = new Set(
@@ -215,6 +332,7 @@ export class BuyerCheckout {
     // transaction, before anything is signed.
     const intent = await this.api.createIntent({
       checkoutProtocol: 1,
+      ...(cinemaProducts.length ? { cinemaCheckout: true } : {}),
       customer: normalizedCustomer,
       lineItems: selected,
       idempotencyKey,
@@ -253,7 +371,12 @@ export class BuyerCheckout {
       idempotencyKey,
       requestItems: selected,
       customer: normalizedCustomer,
-      catalogItems: quote.catalogItems,
+      catalogItems: quote.catalogItems.map((item) => {
+        const seatIds = selected
+          .filter((requested) => requested.productId === item.productId)
+          .flatMap((requested) => requested.seatIds ?? []);
+        return seatIds.length ? { ...item, seatIds } : item;
+      }),
       total: quote.total,
       expiresAt: intent.expiresAt,
       status: "prepared",
@@ -593,10 +716,32 @@ export class BuyerCheckout {
 
   async #completedResult(entry) {
     const receipt = await this.#ensureReceipt(entry);
+    const tickets = Array.isArray(entry.order.tickets)
+      ? entry.order.tickets.map(
+          ({
+            productTitle,
+            productId,
+            eventStage,
+            eventDate,
+            admissionKind,
+            cinema,
+            seat,
+          }) => ({
+            productTitle,
+            productId,
+            eventStage,
+            eventDate,
+            admissionKind,
+            cinema,
+            seat,
+          }),
+        )
+      : entry.order.tickets;
     return {
       status: "completed",
       intentId: entry.intentId,
       ...entry.order,
+      ...(Array.isArray(tickets) ? { tickets } : {}),
       totalUsdc: entry.total,
       orderSubtotalUsdc: entry.order.totalAmount,
       receipt,

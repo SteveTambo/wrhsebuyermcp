@@ -39,6 +39,7 @@ function fixture({
   const store = fakeStore();
   const calls = {
     createIntent: 0,
+    intentInputs: [],
     pay: 0,
     recordOrder: 0,
     approval: 0,
@@ -62,6 +63,7 @@ function fixture({
     },
     async createIntent(input) {
       calls.createIntent += 1;
+      calls.intentInputs.push(input);
       // WRHSE pre-builds a transaction when walletAddress is present, which
       // makes IVANA reject the build the checkout SDK performs at payment
       // time. The wallet is bound by that later build instead.
@@ -187,7 +189,7 @@ test("prepares authoritative, idempotent quotes without exposing checkout tokens
   assert.equal(store.get("intent-1").status, "prepared");
 });
 
-test("rejects cross-store, ticket, and over-limit carts before creating an intent", async () => {
+test("rejects cross-store and over-limit carts before creating an intent", async () => {
   const crossStore = fixture();
   crossStore.buyer.api.getProduct = async (id) => ({
     data: {
@@ -207,12 +209,15 @@ test("rejects cross-store, ticket, and over-limit carts before creating an inten
   );
   assert.equal(crossStore.calls.createIntent, 0);
 
-  const ticket = fixture();
-  ticket.buyer.api.getProduct = async () => ({
+  const event = fixture();
+  event.buyer.api.getProduct = async () => ({
     data: { id: 8, tenantSlug: "shop", admissionKind: "EVENT" },
   });
-  await assert.rejects(prepare(ticket.buyer), /non-ticket products/);
-  assert.equal(ticket.calls.createIntent, 0);
+  await assert.rejects(
+    prepare(event.buyer),
+    /supported WRHSE checkout details/,
+  );
+  assert.equal(event.calls.createIntent, 0);
 
   const tooExpensive = fixture({ total: 6 });
   await assert.rejects(prepare(tooExpensive.buyer), /per-purchase limit/);
@@ -233,6 +238,131 @@ test("rejects server quotes whose catalog items differ from the requested cart",
   };
   await assert.rejects(prepare(buyer), /do not match the requested cart/);
   assert.equal(store.list().length, 0);
+});
+
+test("prepares event admission tickets using WRHSE's server-priced quote", async () => {
+  const { buyer, calls, store } = fixture();
+  buyer.api.getProduct = async () => ({
+    data: {
+      id: 8,
+      tenantSlug: "shop",
+      isDraft: false,
+      admissionKind: null,
+      eventStage: "upcoming",
+      eventDate: "2030-10-12T18:00:00.000Z",
+    },
+  });
+
+  const quote = await prepare(buyer);
+
+  assert.equal(quote.status, "prepared");
+  assert.equal(calls.createIntent, 1);
+  assert.equal("cinemaCheckout" in calls.intentInputs[0], false);
+  assert.equal(store.get(quote.intentId).requestItems[0].productId, 8);
+});
+
+test("prepares reserved cinema seats and includes them in the approval quote", async () => {
+  const { buyer, calls } = fixture();
+  buyer.api.getProduct = async () => ({
+    data: {
+      id: 8,
+      tenantSlug: "shop",
+      isDraft: false,
+      admissionKind: "CINEMA",
+      quantity: 3,
+      cinemaScreening: {
+        seating: { rows: 2, seatsPerRow: 4 },
+        takenSeats: ["A2"],
+      },
+    },
+  });
+
+  const quote = await prepare(buyer, {
+    items: [{ productId: 8, quantity: 1, seatIds: ["A1"] }],
+  });
+
+  assert.equal(calls.intentInputs[0].cinemaCheckout, true);
+  assert.deepEqual(calls.intentInputs[0].lineItems[0].seatIds, ["A1"]);
+  assert.deepEqual(quote.items[0].seatIds, ["A1"]);
+});
+
+test("requires valid available seats for reserved cinema and allows general admission", async () => {
+  const reserved = fixture();
+  reserved.buyer.api.getProduct = async () => ({
+    data: {
+      id: 8,
+      tenantSlug: "shop",
+      isDraft: false,
+      admissionKind: "CINEMA",
+      cinemaScreening: {
+        seating: { rows: 2, seatsPerRow: 4 },
+        takenSeats: ["A2"],
+      },
+    },
+  });
+  await assert.rejects(prepare(reserved.buyer), /one unique seat for each/);
+  await assert.rejects(
+    prepare(reserved.buyer, {
+      items: [{ productId: 8, quantity: 1, seatIds: ["A2"] }],
+    }),
+    /no longer available/,
+  );
+  await assert.rejects(
+    prepare(reserved.buyer, {
+      items: [{ productId: 8, quantity: 1, seatIds: ["B5"] }],
+    }),
+    /one unique seat for each/,
+  );
+  assert.equal(reserved.calls.createIntent, 0);
+
+  const generalAdmission = fixture();
+  generalAdmission.buyer.api.getProduct = async () => ({
+    data: {
+      id: 8,
+      tenantSlug: "shop",
+      isDraft: false,
+      admissionKind: "CINEMA",
+      cinemaScreening: { seating: null },
+    },
+  });
+  const quote = await prepare(generalAdmission.buyer);
+  assert.equal(generalAdmission.calls.intentInputs[0].cinemaCheckout, true);
+  assert.equal(
+    "seatIds" in generalAdmission.calls.intentInputs[0].lineItems[0],
+    false,
+  );
+  assert.equal(quote.status, "prepared");
+});
+
+test("search results include current event and cinema details", async () => {
+  const { buyer } = fixture();
+  buyer.api.searchProducts = async () => [
+    { id: 8, title: "Test show", price: 4, tenantSlug: "shop" },
+  ];
+  buyer.api.getProduct = async () => ({
+    data: {
+      id: 8,
+      eventStage: "upcoming",
+      eventDate: "2030-10-12T18:00:00.000Z",
+      admissionKind: "CINEMA",
+      quantity: 7,
+      cinemaScreening: {
+        movieTitle: "Test show",
+        seating: { rows: 2, seatsPerRow: 4 },
+        takenSeats: ["A1"],
+      },
+    },
+  });
+
+  const [product] = await buyer.searchProducts({ query: "test show" });
+
+  assert.equal(product.eventStage, "upcoming");
+  assert.equal(product.quantity, 7);
+  assert.deepEqual(product.cinemaScreening.seating, {
+    rows: 2,
+    seatsPerRow: 4,
+  });
+  assert.deepEqual(product.cinemaScreening.takenSeats, ["A1"]);
 });
 
 test("requires approval and only records one order after verified payment", async () => {
@@ -271,6 +401,39 @@ test("completed results distinguish the paid total from the order subtotal", asy
   const repeated = await buyer.purchaseCheckout(quote.intentId);
   assert.equal(repeated.totalUsdc, 5.29);
   assert.equal(repeated.orderSubtotalUsdc, 4.5);
+});
+
+test("ticket credentials stay in local recovery state and are omitted from MCP results", async () => {
+  const { buyer, store } = fixture();
+  buyer.api.recordOrder = async () => ({
+    data: {
+      id: 12,
+      externalOrderId: "intent-1",
+      totalAmount: 4,
+      tickets: [
+        {
+          code: "ABCDEFGHIJKLMNOPQRSTUV",
+          productTitle: "Opening night",
+          productId: 8,
+          eventStage: "upcoming",
+          eventDate: "2030-10-12T18:00:00.000Z",
+          seat: "A1",
+        },
+      ],
+    },
+  });
+  const quote = await prepare(buyer);
+
+  const result = await buyer.purchaseCheckout(quote.intentId);
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.tickets.length, 1);
+  assert.equal(result.tickets[0].seat, "A1");
+  assert.equal(JSON.stringify(result).includes("ABCDEFGHIJKLMNOPQRSTUV"), false);
+  assert.equal(
+    store.get(quote.intentId).order.tickets[0].code,
+    "ABCDEFGHIJKLMNOPQRSTUV",
+  );
 });
 
 test("checkout automatically saves one receipt and reuses it on receipt requests", async () => {

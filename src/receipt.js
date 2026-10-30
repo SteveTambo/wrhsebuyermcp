@@ -5,6 +5,7 @@ import { jsPDF } from "jspdf";
 import QRCode from "qrcode";
 
 const COLLECTION_BASE_URL = "https://www.wrhse.top/collect/";
+const TICKET_VERIFY_BASE_URL = "https://www.wrhse.top/verify/";
 const VAT_RATE = 0.16;
 const TRANSACTION_FEE_RATE = 0.016;
 const PAGE_WIDTH = 210;
@@ -301,6 +302,84 @@ export async function saveCheckoutReceipt(
     qrIncluded = true;
   }
 
+  const tickets = Array.isArray(entry.order.tickets) ? entry.order.tickets : [];
+  for (const [index, ticket] of tickets.entries()) {
+    if (
+      typeof ticket?.code !== "string" ||
+      !/^[A-Za-z0-9_-]{22}$/.test(ticket.code) ||
+      typeof ticket.productTitle !== "string" ||
+      !ticket.productTitle.trim()
+    ) {
+      throw new Error("The completed order contains an invalid ticket.");
+    }
+
+    doc.addPage();
+    pageNumber += 1;
+    drawHeader(doc, true);
+    y = 48;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.setTextColor(35, 35, 35);
+    doc.text("ADMISSION TICKET", PAGE_WIDTH / 2, y, { align: "center" });
+    y += 12;
+
+    const ticketLines = [
+      ticket.productTitle.trim(),
+      `Ticket ${index + 1} of ${tickets.length}`,
+      ...(ticket.eventDate
+        ? [`Event date: ${new Date(ticket.eventDate).toLocaleString()}`]
+        : []),
+      ...(ticket.cinema?.movieTitle ? [ticket.cinema.movieTitle] : []),
+      ...(ticket.cinema?.auditorium ? [ticket.cinema.auditorium] : []),
+      ...(ticket.cinema?.startsAt
+        ? [`Screening: ${new Date(ticket.cinema.startsAt).toLocaleString()}`]
+        : []),
+      ...(ticket.cinema?.venueAddress ? [ticket.cinema.venueAddress] : []),
+      ...(ticket.seat ? [`Seat: ${ticket.seat}`] : []),
+    ];
+    for (const line of ticketLines) {
+      const wrapped = doc.splitTextToSize(text(line), RIGHT - LEFT);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.setTextColor(45, 45, 45);
+      doc.text(wrapped, PAGE_WIDTH / 2, y, { align: "center" });
+      y += wrapped.length * 5 + 3;
+    }
+
+    const verificationUrl = new URL(
+      encodeURIComponent(ticket.code),
+      TICKET_VERIFY_BASE_URL,
+    );
+    if (ticket.eventDate) {
+      verificationUrl.searchParams.set("date", String(ticket.eventDate));
+    }
+    const ticketQr = await QRCode.toDataURL(verificationUrl.toString(), {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 512,
+    });
+    const qrSize = 74;
+    const qrX = (PAGE_WIDTH - qrSize) / 2;
+    const qrY = Math.max(y + 5, 135);
+    doc.addImage(ticketQr, "PNG", qrX, qrY, qrSize, qrSize);
+    doc.setDrawColor(40, 40, 40);
+    doc.roundedRect(qrX - 2, qrY - 2, qrSize + 4, qrSize + 4, 2, 2, "S");
+    doc.setFont("courier", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(45, 45, 45);
+    doc.text(ticket.code, PAGE_WIDTH / 2, qrY + qrSize + 9, {
+      align: "center",
+    });
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(
+      "One-time admission credential. Keep this ticket private.",
+      PAGE_WIDTH / 2,
+      qrY + qrSize + 16,
+      { align: "center" },
+    );
+  }
+
   for (let page = 1; page <= pageNumber; page += 1) {
     doc.setPage(page);
     drawFooter(doc, page, pageNumber);
@@ -319,8 +398,12 @@ export async function saveCheckoutReceipt(
     orderId,
     filePath,
     collectionQrIncluded: qrIncluded,
-    message: qrIncluded
-      ? "Receipt saved locally. The PDF contains a collection QR code; keep it private and share it only with the person collecting the order."
-      : "Receipt saved locally. WRHSE did not return a collection code, so no collection QR code was added.",
+    ticketQrIncluded: tickets.length > 0,
+    message:
+      tickets.length > 0
+        ? "Receipt and admission tickets saved locally. The PDF contains private one-time admission or collection credentials; share it only with people authorized to use every credential it contains."
+        : qrIncluded
+          ? "Receipt saved locally. The PDF contains a collection QR code; keep it private and share it only with the person collecting the order."
+          : "Receipt saved locally. WRHSE did not return a collection code, so no collection QR code was added.",
   };
 }

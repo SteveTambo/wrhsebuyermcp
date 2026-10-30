@@ -80,6 +80,39 @@ test("saves a receipt without a QR when no collection code exists", async (t) =>
   assert.doesNotMatch(contents, /\/Subtype\s*\/Image/);
 });
 
+test("saves private admission ticket QR codes in the local PDF", async (t) => {
+  const downloadsDirectory = await mkdtemp(join(tmpdir(), "wrhse-receipt-"));
+  t.after(() => rm(downloadsDirectory, { recursive: true, force: true }));
+
+  const result = await saveCheckoutReceipt(
+    completedEntry({
+      order: {
+        id: 12,
+        totalAmount: 20,
+        paymentMethod: "USDC",
+        collectionCode: null,
+        tickets: [
+          {
+            code: "ABCDEFGHIJKLMNOPQRSTUV",
+            productTitle: "Opening night",
+            eventDate: "2030-10-12T18:00:00.000Z",
+            eventStage: "upcoming",
+          },
+        ],
+      },
+    }),
+    { downloadsDirectory },
+  );
+  const contents = (await readFile(result.filePath)).toString("latin1");
+
+  assert.equal(result.ticketQrIncluded, true);
+  assert.match(result.message, /one-time admission or collection credentials/);
+  assert.match(contents, /ADMISSION TICKET/);
+  assert.match(contents, /Opening night/);
+  assert.match(contents, /ABCDEFGHIJKLMNOPQRSTUV/);
+  assert.match(contents, /\/Subtype\s*\/Image/);
+});
+
 test("does not create receipts for incomplete checkouts", async (t) => {
   const downloadsDirectory = await mkdtemp(join(tmpdir(), "wrhse-receipt-"));
   t.after(() => rm(downloadsDirectory, { recursive: true, force: true }));

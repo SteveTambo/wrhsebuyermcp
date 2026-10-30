@@ -23,7 +23,7 @@ export function registerBuyerTools(server, buyer) {
     {
       title: "Search WRHSE public products",
       description:
-        "Search approved public WRHSE listings. Read-only. Use product IDs from these results to prepare a checkout.",
+        "Search approved public WRHSE listings. Read-only. Results include event and cinema screening details when available. Use product IDs from these results to prepare a checkout.",
       inputSchema: {
         query: z.string().trim().min(2).max(100),
         buyerCountry: z
@@ -52,7 +52,7 @@ export function registerBuyerTools(server, buyer) {
     {
       title: "Prepare a WRHSE checkout",
       description:
-        "Create a server-priced, single-store USDC checkout quote for public non-ticket products. Does not sign or pay. Supply a stable UUID idempotencyKey and the buyer's own delivery/contact fields.",
+        "Create a server-priced, single-store USDC checkout quote for public products, including event and cinema tickets. Does not sign or pay. For reserved-seat cinema, supply one seatIds entry per ticket using the screening's available seat map. Cinema screenings must be checked out separately. Supply a stable UUID idempotencyKey and the buyer's own delivery/contact fields.",
       inputSchema: {
         idempotencyKey: z.string().trim().min(16).max(255),
         items: z
@@ -61,6 +61,17 @@ export function registerBuyerTools(server, buyer) {
               productId: z.number().int().positive(),
               quantity: z.number().int().positive().max(10),
               size: z.string().trim().min(1).max(20).optional(),
+              seatIds: z
+                .array(
+                  z
+                    .string()
+                    .regex(
+                      /^[A-Z](?:[1-9]|[1-3][0-9]|40)$/,
+                      "Use a valid cinema seat ID such as A1.",
+                    ),
+                )
+                .max(10)
+                .optional(),
             }),
           )
           .min(1)
