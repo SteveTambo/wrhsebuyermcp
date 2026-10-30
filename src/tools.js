@@ -10,10 +10,36 @@ function asToolResult(value) {
 
 function asToolError(tool, error) {
   logError("tool_failed", error, { tool });
-  const message =
+  let message =
     error instanceof BuyerApiError
       ? error.message
       : "The buyer checkout operation failed. Use recover_checkout to check any pending payment.";
+  if (error instanceof BuyerApiError) {
+    if (error.code === "CINEMA_SEAT_TAKEN") {
+      message =
+        "WRHSE could not reserve those seats because one or more were taken. Call check_cinema_seat_availability again, show the buyer the updated availableSeatIds, ask them to choose replacements, then retry with a new idempotencyKey. No payment was made.";
+    } else if (error.code === "CINEMA_SEATS_REQUIRED") {
+      message =
+        "This cinema screening has reserved seating. Call check_cinema_seat_availability, show the buyer the availableSeatIds, and pass exactly one chosen seat ID per ticket.";
+    } else if (error.code === "CINEMA_SEATS_INVALID") {
+      message =
+        "The cinema seat selection is invalid. Refresh with check_cinema_seat_availability, show availableSeatIds, and pass distinct valid seat IDs equal in number to the tickets.";
+    } else if (error.code === "CINEMA_CAPACITY_UNAVAILABLE") {
+      message =
+        "WRHSE could not reserve enough places for that screening. Check availability again and show the buyer the current seats or ticket count.";
+    } else if (error.code === "CINEMA_SALES_CLOSED") {
+      message = "Ticket sales for this cinema screening have closed.";
+    } else if (error.code === "CINEMA_SEPARATE_CHECKOUT") {
+      message =
+        "Cinema tickets must be checked out as a single-screening cart. Remove all other products and use one line for the screening.";
+    } else if (error.code === "CINEMA_ATTEMPT_CONFLICT") {
+      message =
+        "WRHSE still has an open seat hold for this screening. If the previous prepare_checkout response was lost, retry the exact same items and idempotencyKey. To change seats, first resolve the previous checkout or wait for its hold to clear; then check availability and use a new idempotencyKey.";
+    } else if (error.code === "CINEMA_HOLD_LIMIT") {
+      message =
+        "Too many cinema seats are currently held from this network. Do not retry with new seat selections; finish the open checkout or wait for its hold to clear, then check availability again.";
+    }
+  }
   return { isError: true, content: [{ type: "text", text: message }] };
 }
 
@@ -23,7 +49,7 @@ export function registerBuyerTools(server, buyer) {
     {
       title: "Search WRHSE public products",
       description:
-        "Search approved public WRHSE listings. Read-only. Results include event and cinema screening details when available. Use product IDs from these results to prepare a checkout.",
+        "Search approved public WRHSE listings. Read-only. Results include event and cinema details plus a cinema availability summary. Before offering or selecting cinema seats, call check_cinema_seat_availability for the fresh seat map; show its availableSeatIds and get the buyer's seat choices.",
       inputSchema: {
         query: z.string().trim().min(2).max(100),
         buyerCountry: z
@@ -48,18 +74,53 @@ export function registerBuyerTools(server, buyer) {
   );
 
   server.registerTool(
+    "check_cinema_seat_availability",
+    {
+      title: "Check available cinema seats",
+      description:
+        "Read current WRHSE availability for one cinema screening. Always call this before asking the buyer to choose. For reserved seating, show availableSeatIds exactly and ask which seats they want; unavailable seats cannot be selected. For general admission, show availableCount and explain there are no assigned seats. Read-only: this does not hold seats. prepare_checkout rechecks availability and places the hold.",
+      inputSchema: {
+        productId: z
+          .number()
+          .int()
+          .positive()
+          .describe("Cinema screening productId from search_public_products."),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        return asToolResult(await buyer.checkCinemaSeatAvailability(args));
+      } catch (error) {
+        return asToolError("check_cinema_seat_availability", error);
+      }
+    },
+  );
+
+  server.registerTool(
     "prepare_checkout",
     {
       title: "Prepare a WRHSE checkout",
       description:
-        "Create a server-priced, single-store USDC checkout quote for public products, including event and cinema tickets. Does not sign or pay. For reserved-seat cinema, supply one seatIds entry per ticket using the screening's available seat map. Cinema screenings must be checked out separately. Supply a stable UUID idempotencyKey and the buyer's own delivery/contact fields.",
+        "Create a server-priced, single-store USDC checkout quote for public products, including event and cinema tickets. Does not sign or pay. For reserved-seat cinema, first call check_cinema_seat_availability, show its availableSeatIds, and ask the buyer which seats they choose. Supply one seatIds entry per ticket (seatIds.length must equal quantity). Cinema screenings must be checked out separately. If a seat was taken, refresh availability and use a NEW idempotencyKey for the changed selection. WRHSE rechecks and atomically holds seats when creating the intent.",
       inputSchema: {
         idempotencyKey: z.string().trim().min(16).max(255),
         items: z
           .array(
             z.object({
               productId: z.number().int().positive(),
-              quantity: z.number().int().positive().max(10),
+              quantity: z
+                .number()
+                .int()
+                .positive()
+                .max(10)
+                .describe(
+                  "Number of tickets. For reserved-seat cinema, must equal the number of seatIds.",
+                ),
               size: z.string().trim().min(1).max(20).optional(),
               seatIds: z
                 .array(
@@ -71,6 +132,9 @@ export function registerBuyerTools(server, buyer) {
                     ),
                 )
                 .max(10)
+                .describe(
+                  "For reserved-seat cinema only: one currently available seat ID per ticket, selected from check_cinema_seat_availability.",
+                )
                 .optional(),
             }),
           )

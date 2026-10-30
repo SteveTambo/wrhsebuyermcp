@@ -82,9 +82,13 @@ Give the agent these rules, without including the secret:
 
 - Use only `search_public_products` to discover products, then
   `prepare_checkout` with the customer's actual product choices and delivery
-  details. For reserved-seat cinema, use the returned screening seat map and
-  pass one available `seatIds` value per ticket. Do not invent seats; the server
-  checks availability again while placing the hold.
+  details. For reserved-seat cinema, call `check_cinema_seat_availability`
+  immediately before offering seats. Show the buyer the returned
+  `availableSeatIds` list and seat map, and ask which seats they choose. Pass
+  exactly one available `seatIds` value per ticket. Do not invent seats; WRHSE
+  checks availability again and places the hold while creating the intent.
+  If WRHSE reports a seat was taken, fetch availability again and use a new
+  idempotency key for the changed selection.
 - Show the returned products, server-priced total, wallet address, and delivery
   details to the customer. Do not claim a purchase succeeded until the tool
   returns `completed`.
@@ -116,11 +120,18 @@ prototype on devnet with a low-funded burner wallet.
 ## Available tools
 
 - `search_public_products`: browse approved public listings, including event
-  and cinema screening details when available.
+  and cinema screening details and a concise cinema availability summary.
+- `check_cinema_seat_availability`: fetch the latest seat map for one cinema
+  screening immediately before seat selection. For reserved seating, show
+  `availableSeatIds` and ask the buyer which seats they choose; for general
+  admission, report `availableCount` and explain there are no assigned seats.
+  This is read-only and does not reserve seats.
 - `prepare_checkout`: revalidates the products through WRHSE, creates a
   server-priced quote, applies the per-checkout cap, and stores local recovery
-  state. For reserved-seat cinema, provide one seat ID per ticket; seats are
-  held by WRHSE when it creates the intent. The supplied `idempotencyKey` must
+  state. For reserved-seat cinema, provide exactly one currently available
+  seat ID per ticket (`seatIds.length` must equal `quantity`); WRHSE rechecks
+  and holds seats when it creates the intent. Use a new `idempotencyKey` if
+  the buyer changes seats after a failed preparation. The supplied key must
   remain the same for retries of the same preparation request.
 - `purchase_checkout`: asks for MCP user approval, then signs and pays the
   exact prepared intent. After WRHSE confirms the order, it automatically saves

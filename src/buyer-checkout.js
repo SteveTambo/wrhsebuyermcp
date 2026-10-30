@@ -21,7 +21,120 @@ function seatExists(seating, id) {
   );
 }
 
-function ticketDetails(product) {
+function cinemaSeatAvailability(product, now = Date.now()) {
+  const screening = product.cinemaScreening;
+  if (!screening) {
+    throw new BuyerApiError(
+      "This product is not a cinema screening. Use its event ticket details instead.",
+      400,
+      "NOT_CINEMA_SCREENING",
+    );
+  }
+  const seating = screening.seating;
+  const checkedAt = new Date(now).toISOString();
+  const salesCloseAt = Date.parse(screening.salesCloseAt);
+  const unavailableSeats = Array.isArray(screening.takenSeats)
+    ? [...new Set(screening.takenSeats)]
+    : [];
+  if (seating) {
+    if (
+      !Number.isInteger(seating.rows) ||
+      seating.rows < 1 ||
+      seating.rows > 26 ||
+      !Number.isInteger(seating.seatsPerRow) ||
+      seating.seatsPerRow < 1 ||
+      seating.seatsPerRow > 40 ||
+      !Array.isArray(screening.takenSeats)
+    ) {
+      throw new BuyerApiError(
+        "WRHSE did not return a complete cinema seat map and availability. Refresh the screening and try again.",
+        502,
+        "CINEMA_AVAILABILITY_UNAVAILABLE",
+      );
+    }
+  } else if (!Number.isFinite(product.quantity)) {
+    throw new BuyerApiError(
+      "WRHSE did not return the current general-admission ticket quantity. Refresh the screening and try again.",
+      502,
+      "CINEMA_AVAILABILITY_UNAVAILABLE",
+    );
+  }
+
+  const closed =
+    screening.status === "CANCELLED" ||
+    !Number.isFinite(salesCloseAt) ||
+    salesCloseAt <= now;
+  const taken = new Set(
+    seating
+      ? unavailableSeats.filter((seat) => seatExists(seating, seat))
+      : [],
+  );
+  const allSeatIds = seating
+    ? Array.from({ length: seating.rows }, (_, rowIndex) =>
+        Array.from(
+          { length: seating.seatsPerRow },
+          (_, index) => `${String.fromCharCode(65 + rowIndex)}${index + 1}`,
+        ),
+      ).flat()
+    : [];
+  const freeSeatIds = allSeatIds.filter((seat) => !taken.has(seat));
+  const soldOut = seating
+    ? freeSeatIds.length === 0
+    : product.quantity <= 0;
+  const status = closed
+    ? screening.status === "CANCELLED"
+      ? "cancelled"
+      : "sales_closed"
+    : soldOut
+      ? "sold_out"
+      : "on_sale";
+  const availableSeats = status === "on_sale" ? freeSeatIds : [];
+  const availableSet = new Set(availableSeats);
+  const unavailableSeatIds = allSeatIds.filter(
+    (seat) => !availableSet.has(seat),
+  );
+  const seatMap = seating
+    ? Array.from({ length: seating.rows }, (_, rowIndex) => {
+        const row = String.fromCharCode(65 + rowIndex);
+        const seats = Array.from(
+          { length: seating.seatsPerRow },
+          (_, index) => {
+            const id = `${row}${index + 1}`;
+            return {
+              id,
+              status: availableSet.has(id)
+                ? "available"
+                : closed
+                  ? "sales_closed"
+                  : "taken",
+            };
+          },
+        );
+        return { row, seats };
+      })
+    : [];
+
+  return {
+    status,
+    checkedAt,
+    salesCloseAt: screening.salesCloseAt,
+    seating: seating ?? null,
+    availableCount: seating
+      ? availableSeats.length
+      : status === "on_sale"
+        ? Math.max(0, product.quantity)
+        : 0,
+    unavailableCount: seating ? unavailableSeatIds.length : 0,
+    availableSeatIds: availableSeats,
+    unavailableSeatIds,
+    seatMap,
+  };
+}
+
+function ticketDetails(product, now = Date.now()) {
+  const availability = product.cinemaScreening
+    ? cinemaSeatAvailability(product, now)
+    : null;
   return {
     ...(product.admissionKind ? { admissionKind: product.admissionKind } : {}),
     ...(product.eventStage ? { eventStage: product.eventStage } : {}),
@@ -37,8 +150,12 @@ function ticketDetails(product) {
             endsAt: product.cinemaScreening.endsAt,
             salesCloseAt: product.cinemaScreening.salesCloseAt,
             seating: product.cinemaScreening.seating,
-            takenSeats: product.cinemaScreening.takenSeats,
-            quantity: product.quantity,
+            availability: {
+              status: availability.status,
+              checkedAt: availability.checkedAt,
+              availableCount: availability.availableCount,
+              seating: availability.seating,
+            },
           },
         }
       : {}),
@@ -168,10 +285,48 @@ export class BuyerCheckout {
           tenantSlug: product.tenantSlug,
           storeName: product.store?.name,
           area: product.area?.name,
-          ...(current ? ticketDetails(current) : {}),
+          ...(current ? ticketDetails(current, this.now()) : {}),
         };
       }),
     );
+  }
+
+  async checkCinemaSeatAvailability({ productId }) {
+    const result = await this.api.getProduct(productId);
+    const product = result?.data;
+    if (
+      !product ||
+      product.id !== productId ||
+      product.isDraft ||
+      product.archivedAt
+    ) {
+      throw new BuyerApiError(
+        "The cinema screening could not be found or is no longer available.",
+        404,
+        "PRODUCT_NOT_FOUND",
+      );
+    }
+    const availability = cinemaSeatAvailability(product, this.now());
+    return {
+      productId: product.id,
+      title: product.title,
+      movieTitle: product.cinemaScreening.movieTitle,
+      auditorium: product.cinemaScreening.auditorium,
+      venueAddress: product.cinemaScreening.venueAddress,
+      timezone: product.cinemaScreening.timezone,
+      startsAt: product.cinemaScreening.startsAt,
+      endsAt: product.cinemaScreening.endsAt,
+      ...availability,
+      ...(availability.seating
+        ? {
+            instruction:
+              "Show availableSeatIds to the buyer and ask them to choose. In seatMap, available means selectable, taken means held or sold, and sales_closed means no seats can be purchased. WRHSE rechecks and locks seats when preparing checkout, so availability may change.",
+          }
+        : {
+            instruction:
+              "This is general admission with no assigned seats. Use availableCount as the current ticket quantity; WRHSE rechecks inventory when preparing checkout.",
+          }),
+    };
   }
 
   async prepareCheckout({ items, customer, idempotencyKey }) {
@@ -213,6 +368,23 @@ export class BuyerCheckout {
         ...(seatIds?.length ? { seatIds: [...seatIds] } : {}),
       };
     });
+    const existing = this.store
+      .list()
+      .find((entry) => entry.idempotencyKey === idempotencyKey);
+    if (existing) {
+      if (
+        JSON.stringify(existing.requestItems) !== JSON.stringify(selected) ||
+        JSON.stringify(existing.customer) !== JSON.stringify(normalizedCustomer)
+      ) {
+        throw new BuyerApiError(
+          "This idempotency key is already associated with a different checkout.",
+          409,
+          "IDEMPOTENCY_CONFLICT",
+        );
+      }
+      return this.#quoteResult(existing);
+    }
+
     const productDetails = await Promise.all(
       selected.map(async (item) => {
         const result = await this.api.getProduct(item.productId);
@@ -246,7 +418,8 @@ export class BuyerCheckout {
     );
     if (
       cinemaProducts.length &&
-      new Set(selected.map((item) => item.productId)).size !== 1
+      (selected.length !== 1 ||
+        new Set(selected.map((item) => item.productId)).size !== 1)
     ) {
       throw new BuyerApiError(
         "Buy one cinema screening per ticket checkout. Food needs a separate order.",
@@ -258,6 +431,13 @@ export class BuyerCheckout {
     if (cinemaProducts.length) {
       const screening = cinemaProducts[0].cinemaScreening;
       if (screening.seating) {
+        if (!Array.isArray(screening.takenSeats)) {
+          throw new BuyerApiError(
+            "WRHSE could not verify current seat availability. Refresh the screening and try again.",
+            503,
+            "CINEMA_AVAILABILITY_UNAVAILABLE",
+          );
+        }
         if (
           suppliedSeats.length !== totalQuantity(selected) ||
           suppliedSeats.length > MAX_CINEMA_SEATS ||
@@ -268,19 +448,6 @@ export class BuyerCheckout {
             "Choose one unique seat for each cinema ticket (up to 10 seats).",
             400,
             "CINEMA_SEATS_INVALID",
-          );
-        }
-        const takenSeats = Array.isArray(screening.takenSeats)
-          ? new Set(screening.takenSeats)
-          : null;
-        if (
-          takenSeats &&
-          suppliedSeats.some((seat) => takenSeats.has(seat))
-        ) {
-          throw new BuyerApiError(
-            "Some selected cinema seats are no longer available. Choose different seats.",
-            409,
-            "CINEMA_SEAT_TAKEN",
           );
         }
       } else if (suppliedSeats.length) {
@@ -306,23 +473,6 @@ export class BuyerCheckout {
         400,
         "MULTIPLE_STORES",
       );
-    }
-
-    const existing = this.store
-      .list()
-      .find((entry) => entry.idempotencyKey === idempotencyKey);
-    if (existing) {
-      if (
-        JSON.stringify(existing.requestItems) !== JSON.stringify(selected) ||
-        JSON.stringify(existing.customer) !== JSON.stringify(normalizedCustomer)
-      ) {
-        throw new BuyerApiError(
-          "This idempotency key is already associated with a different checkout.",
-          409,
-          "IDEMPOTENCY_CONFLICT",
-        );
-      }
-      return this.#quoteResult(existing);
     }
 
     // Do not send walletAddress here: WRHSE pre-builds a payment transaction

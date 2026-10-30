@@ -303,17 +303,26 @@ test("requires valid available seats for reserved cinema and allows general admi
   await assert.rejects(prepare(reserved.buyer), /one unique seat for each/);
   await assert.rejects(
     prepare(reserved.buyer, {
-      items: [{ productId: 8, quantity: 1, seatIds: ["A2"] }],
-    }),
-    /no longer available/,
-  );
-  await assert.rejects(
-    prepare(reserved.buyer, {
       items: [{ productId: 8, quantity: 1, seatIds: ["B5"] }],
     }),
     /one unique seat for each/,
   );
   assert.equal(reserved.calls.createIntent, 0);
+
+  reserved.buyer.api.createIntent = async () => {
+    reserved.calls.createIntent += 1;
+    throw Object.assign(new Error("seat taken"), {
+      code: "CINEMA_SEAT_TAKEN",
+      status: 409,
+    });
+  };
+  await assert.rejects(
+    prepare(reserved.buyer, {
+      items: [{ productId: 8, quantity: 1, seatIds: ["A2"] }],
+    }),
+    (error) => error.code === "CINEMA_SEAT_TAKEN",
+  );
+  assert.equal(reserved.calls.createIntent, 1);
 
   const generalAdmission = fixture();
   generalAdmission.buyer.api.getProduct = async () => ({
@@ -348,8 +357,10 @@ test("search results include current event and cinema details", async () => {
       quantity: 7,
       cinemaScreening: {
         movieTitle: "Test show",
+        salesCloseAt: future(),
+        status: "SCHEDULED",
         seating: { rows: 2, seatsPerRow: 4 },
-        takenSeats: ["A1"],
+        takenSeats: ["A1", "B2"],
       },
     },
   });
@@ -362,7 +373,127 @@ test("search results include current event and cinema details", async () => {
     rows: 2,
     seatsPerRow: 4,
   });
-  assert.deepEqual(product.cinemaScreening.takenSeats, ["A1"]);
+  assert.equal(product.cinemaScreening.availability.status, "on_sale");
+  assert.equal(product.cinemaScreening.availability.availableCount, 6);
+  assert.equal(
+    "availableSeatIds" in product.cinemaScreening.availability,
+    false,
+  );
+});
+
+test("fresh cinema seat availability returns a complete, labeled seat map", async () => {
+  const { buyer } = fixture();
+  buyer.api.getProduct = async () => ({
+    data: {
+      id: 8,
+      title: "Test screening",
+      isDraft: false,
+      cinemaScreening: {
+        movieTitle: "Test movie",
+        auditorium: "Screen 1",
+        venueAddress: "1 Cinema Road",
+        timezone: "Africa/Nairobi",
+        startsAt: "2030-10-12T18:00:00.000Z",
+        endsAt: "2030-10-12T20:00:00.000Z",
+        salesCloseAt: future(),
+        status: "SCHEDULED",
+        seating: { rows: 2, seatsPerRow: 3 },
+        takenSeats: ["A2", "B3"],
+      },
+    },
+  });
+
+  const result = await buyer.checkCinemaSeatAvailability({ productId: 8 });
+
+  assert.equal(result.status, "on_sale");
+  assert.deepEqual(result.availableSeatIds, ["A1", "A3", "B1", "B2"]);
+  assert.deepEqual(result.unavailableSeatIds, ["A2", "B3"]);
+  assert.deepEqual(
+    result.seatMap.map((row) => row.seats.map((seat) => seat.status)),
+    [
+      ["available", "taken", "available"],
+      ["available", "available", "taken"],
+    ],
+  );
+  assert.match(result.instruction, /ask them to choose/);
+});
+
+test("retries the same held-seat checkout idempotently without rechecking seats", async () => {
+  const { buyer, calls } = fixture();
+  let seatIsTaken = false;
+  buyer.api.getProduct = async () => ({
+    data: {
+      id: 8,
+      tenantSlug: "shop",
+      isDraft: false,
+      admissionKind: "CINEMA",
+      cinemaScreening: {
+        salesCloseAt: future(),
+        status: "SCHEDULED",
+        seating: { rows: 1, seatsPerRow: 3 },
+        takenSeats: seatIsTaken ? ["A1"] : [],
+      },
+    },
+  });
+  const request = {
+    items: [{ productId: 8, quantity: 1, seatIds: ["A1"] }],
+  };
+
+  const first = await prepare(buyer, request);
+  seatIsTaken = true;
+  const retry = await prepare(buyer, request);
+
+  assert.equal(first.intentId, retry.intentId);
+  assert.equal(calls.createIntent, 1);
+});
+
+test("fresh cinema availability handles general admission and closed screenings", async () => {
+  const { buyer } = fixture();
+  let screening = {
+    salesCloseAt: future(),
+    status: "SCHEDULED",
+    seating: null,
+  };
+  buyer.api.getProduct = async () => ({
+    data: {
+      id: 8,
+      title: "General admission",
+      quantity: 12,
+      isDraft: false,
+      cinemaScreening: screening,
+    },
+  });
+
+  const open = await buyer.checkCinemaSeatAvailability({ productId: 8 });
+  assert.equal(open.status, "on_sale");
+  assert.equal(open.availableCount, 12);
+  assert.deepEqual(open.availableSeatIds, []);
+  assert.match(open.instruction, /general admission/);
+
+  screening = { ...screening, salesCloseAt: "2000-01-01T00:00:00.000Z" };
+  const closed = await buyer.checkCinemaSeatAvailability({ productId: 8 });
+  assert.equal(closed.status, "sales_closed");
+  assert.equal(closed.availableCount, 0);
+});
+
+test("cinema availability fails closed when seat inventory is missing", async () => {
+  const { buyer } = fixture();
+  buyer.api.getProduct = async () => ({
+    data: {
+      id: 8,
+      title: "Test screening",
+      isDraft: false,
+      cinemaScreening: {
+        salesCloseAt: future(),
+        seating: { rows: 2, seatsPerRow: 3 },
+      },
+    },
+  });
+
+  await assert.rejects(
+    buyer.checkCinemaSeatAvailability({ productId: 8 }),
+    (error) => error.code === "CINEMA_AVAILABILITY_UNAVAILABLE",
+  );
 });
 
 test("requires approval and only records one order after verified payment", async () => {
