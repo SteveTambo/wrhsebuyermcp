@@ -85,7 +85,7 @@ user-level `mcp.json`):
     "wrhse-buyer": {
       "type": "stdio",
       "command": "npx",
-      "args": ["--yes", "wrhse-buyer-mcp@0.1.11", "start"]
+      "args": ["--yes", "wrhse-buyer-mcp@0.1.12", "start"]
     }
   }
 }
