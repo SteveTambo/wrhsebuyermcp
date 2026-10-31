@@ -132,7 +132,13 @@ function fixture({
           usdcToBaseUnits(total),
         ),
       );
-      await wallet.signTransaction(tx);
+      try {
+        await wallet.signTransaction(tx);
+      } catch (error) {
+        throw Object.assign(new Error(error.message, { cause: error }), {
+          code: "SEND_FAILED",
+        });
+      }
       if (failAfterSign instanceof Error) throw failAfterSign;
       const signature = bs58.encode(tx.signature);
       await onSignature(signature, {
@@ -650,19 +656,33 @@ test("cannot pay when approval or a balance check fails", async () => {
   );
   assert.equal(approvalFailure.calls.pay, 0);
 
-  const insufficientFunds = fixture({
-    fundsError: new Error("insufficient funds"),
-  });
-  const fundsQuote = await prepare(insufficientFunds.buyer);
-  const fundsResult = await insufficientFunds.buyer.purchaseCheckout(
-    fundsQuote.intentId,
-  );
-  assert.equal(fundsResult.status, "payment_failed");
-  assert.equal(insufficientFunds.calls.pay, 1);
-  assert.equal(
-    insufficientFunds.buyer.store.get(fundsQuote.intentId).signature,
-    undefined,
-  );
+  for (const [code, message] of [
+    [
+      "INSUFFICIENT_SOL",
+      "The burner wallet needs at least 0.005 devnet SOL",
+    ],
+    [
+      "INSUFFICIENT_USDC",
+      "The burner wallet does not have enough devnet USDC",
+    ],
+  ]) {
+    const insufficientFunds = fixture({
+      fundsError: Object.assign(new Error("balance check failed"), { code }),
+    });
+    const fundsQuote = await prepare(insufficientFunds.buyer);
+    const fundsResult = await insufficientFunds.buyer.purchaseCheckout(
+      fundsQuote.intentId,
+    );
+    assert.equal(fundsResult.status, "payment_failed");
+    assert.equal(fundsResult.code, code);
+    assert.match(fundsResult.message, new RegExp(message));
+    assert.match(fundsResult.message, /no payment was sent|no transaction was signed/i);
+    assert.equal(insufficientFunds.calls.pay, 1);
+    assert.equal(
+      insufficientFunds.buyer.store.get(fundsQuote.intentId).signature,
+      undefined,
+    );
+  }
 });
 
 test("a signed attempt rejected before registration is not treated as pending", async () => {

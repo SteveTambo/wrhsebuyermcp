@@ -11,6 +11,44 @@ const MAX_QUANTITY = 20;
 const MAX_LINE_QUANTITY = 10;
 const MAX_CINEMA_SEATS = 10;
 const SEAT_ID = /^[A-Z](?:[1-9]|[1-3][0-9]|40)$/;
+const KNOWN_PRE_BROADCAST_FAILURES = new Map([
+  [
+    "INSUFFICIENT_SOL",
+    "The burner wallet needs at least 0.005 devnet SOL for transaction fees. Fund it on devnet and prepare a new checkout.",
+  ],
+  [
+    "INSUFFICIENT_USDC",
+    "The burner wallet does not have enough devnet USDC for this quote. Fund it on devnet and prepare a new checkout.",
+  ],
+  [
+    "BALANCE_CHECK_UNAVAILABLE",
+    "The burner-wallet balance check was unavailable. Check IVANA's checkout RPC and prepare a new checkout.",
+  ],
+  [
+    "INVALID_USDC_MINT",
+    "IVANA's checkout payment mint could not be validated. Contact support before trying again.",
+  ],
+  [
+    "INVALID_USDC_BALANCE",
+    "IVANA's payment-mint balance could not be validated. Contact support before trying again.",
+  ],
+]);
+
+function knownPreBroadcastFailure(error) {
+  const seen = new Set();
+  for (
+    let current = error;
+    current && typeof current === "object" && !seen.has(current);
+    current = current.cause
+  ) {
+    seen.add(current);
+    if (typeof current.code === "string") {
+      const message = KNOWN_PRE_BROADCAST_FAILURES.get(current.code);
+      if (message) return { code: current.code, message };
+    }
+  }
+  return null;
+}
 
 function seatExists(seating, id) {
   const match = /^([A-Z])(\d+)$/.exec(id);
@@ -702,12 +740,15 @@ export class BuyerCheckout {
         }
         entry.status = "payment_failed";
         await this.store.save(entry);
+        const knownFailure = knownPreBroadcastFailure(error);
         return {
           status: "payment_failed",
           message: paymentRejected
             ? "The Solana node rejected the transaction before broadcasting it, so no payment was sent. This checkout cannot be paid again. WRHSE may keep its cinema seat hold until the payment window expires and on-chain checks confirm it is safe to release. Refresh availability before choosing seats again; if the hold remains, wait for WRHSE to clear it."
-            : "No payment transaction was broadcast, so no payment was sent. This checkout cannot be paid again. WRHSE may keep its cinema seat hold until the payment window expires and on-chain checks confirm it is safe to release. Refresh availability before choosing seats again; if the hold remains, wait for WRHSE to clear it.",
-          code: typeof error?.code === "string" ? error.code : "PAYMENT_FAILED",
+            : `${knownFailure ? `${knownFailure.message} ` : ""}No payment transaction was broadcast, so no payment was sent. This checkout cannot be paid again. WRHSE may keep its cinema seat hold until the payment window expires and on-chain checks confirm it is safe to release. Refresh availability before choosing seats again; if the hold remains, wait for WRHSE to clear it.`,
+          code:
+            knownFailure?.code ??
+            (typeof error?.code === "string" ? error.code : "PAYMENT_FAILED"),
           intentId,
           checkoutExpiresAt: entry.expiresAt,
         };

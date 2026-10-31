@@ -129,11 +129,13 @@ Give the agent these rules, without including the secret:
   signs. Never try to bypass a declined or unsupported approval request.
 - If a result is `payment_pending` or `paid_order_pending`, do not pay again.
   Call `recover_checkout` with that intent ID until it reaches a final result.
-- If a result is `payment_failed`, no transaction was broadcast. For cinema
-  checkouts, WRHSE may keep the seat hold until the payment window expires and
-  on-chain checks confirm it is safe to release. Refresh availability before
-  asking the buyer to choose again; if the held seats still block a new
-  checkout, wait for WRHSE to clear the hold.
+- If a result is `payment_failed`, no transaction was broadcast. Use its
+  failure code and message to address known issues such as insufficient devnet
+  SOL or USDC, then prepare a new checkout. For cinema checkouts, WRHSE may
+  keep the seat hold until the payment window expires and on-chain checks
+  confirm it is safe to release. Refresh availability before asking the buyer
+  to choose again; if the held seats still block a new checkout, wait for WRHSE
+  to clear the hold.
 - The completed purchase result includes the automatically saved receipt path.
   Do not copy the PDF contents or any ticket code/QR contents into chat. Ticket
   QR codes are one-time admission credentials; share the PDF privately only
