@@ -728,6 +728,17 @@ export class BuyerCheckout {
       if (entry.status === "completed") return this.#completedResult(entry);
       if (entry.status === "paid_order_pending")
         return this.#recordOrder(entry);
+      if (entry.status === "paying" && !entry.signature) {
+        entry.status = "payment_failed";
+        await this.store.save(entry);
+        return {
+          status: "payment_failed",
+          intentId,
+          code: "PAYMENT_FAILED",
+          message:
+            "The previous payment attempt stopped before a transaction signature was saved. No payment was broadcast; prepare a new checkout.",
+        };
+      }
       if (entry.status !== "payment_pending" || !entry.signature) {
         return { status: entry.status, intentId };
       }

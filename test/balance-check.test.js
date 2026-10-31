@@ -76,6 +76,18 @@ test("accepts a valid six-decimal payment mint and sufficient balances", async (
   );
 });
 
+test("rounds fractional base-unit quotes up when checking the wallet balance", async () => {
+  const { checkFunds, owner, mint } = fixture({ tokenUnits: "1000000" });
+  await assert.rejects(
+    checkFunds({
+      walletAddress: owner.toBase58(),
+      total: 1.000000000001,
+      mint,
+    }),
+    /not have enough devnet USDC/,
+  );
+});
+
 test("rejects insufficient SOL, token funds, malformed balances, and invalid mints", async () => {
   const lowSol = fixture({ solBalance: 4_999_999 });
   await assert.rejects(

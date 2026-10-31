@@ -6,6 +6,7 @@ import {
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import { ComputeBudgetProgram, PublicKey } from "@solana/web3.js";
+import { usdcToBaseUnits } from "./usdc.js";
 
 const MEMO_PROGRAM_ID = new PublicKey(
   "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
@@ -145,7 +146,7 @@ export function assertSafeCheckoutTransaction(
     );
   }
 
-  const expectedTotal = BigInt(Math.round(totalUsdc * 1_000_000));
+  const expectedTotal = usdcToBaseUnits(totalUsdc);
   if (
     computeUnitLimitCount !== 1 ||
     computeUnitPriceCount !== 1 ||

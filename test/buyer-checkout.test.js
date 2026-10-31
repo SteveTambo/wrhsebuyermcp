@@ -8,6 +8,7 @@ import {
 } from "@solana/spl-token";
 import { ComputeBudgetProgram, Keypair, Transaction } from "@solana/web3.js";
 import { BuyerCheckout } from "../src/buyer-checkout.js";
+import { usdcToBaseUnits } from "../src/usdc.js";
 
 const future = () => new Date(Date.now() + 60_000).toISOString();
 
@@ -128,7 +129,7 @@ function fixture({
           source,
           destination,
           wallet.publicKey,
-          BigInt(Math.round(total * 1_000_000)),
+          usdcToBaseUnits(total),
         ),
       );
       await wallet.signTransaction(tx);
@@ -732,6 +733,23 @@ test("recovery records an already-completed payment without paying again", async
   const pendingError = Object.assign(new Error("uncertain"), {
     signature: "3".repeat(64),
     lastValidBlockHeight: 100,
+  });
+
+  test("recovery resolves a crashed paying attempt without a signature as failed", async () => {
+    const { buyer, store, calls } = fixture();
+    const quote = await prepare(buyer);
+    const entry = store.get(quote.intentId);
+    entry.status = "paying";
+    await store.save(entry);
+
+    const result = await buyer.recoverCheckout(quote.intentId);
+
+    assert.equal(result.status, "payment_failed");
+    assert.equal(result.code, "PAYMENT_FAILED");
+    assert.match(result.message, /No payment was broadcast/);
+    assert.equal(store.get(quote.intentId).status, "payment_failed");
+    assert.equal(calls.checkoutForIntent, 0);
+    assert.equal(calls.pay, 0);
   });
   const { buyer, calls } = fixture({
     payResult: pendingError,

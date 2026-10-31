@@ -52,6 +52,23 @@ test("accepts only a burner-funded USDC transfer matching the quote", () => {
   );
 });
 
+test("rounds fractional base-unit quotes up consistently", () => {
+  const wallet = Keypair.generate();
+  const mint = Keypair.generate().publicKey;
+  const transaction = paymentTransaction({
+    wallet,
+    mint,
+    amount: 1_000_001n,
+  });
+  assert.equal(
+    assertSafeCheckoutTransaction(transaction, {
+      walletAddress: wallet.publicKey,
+      totalUsdc: 1.000000000001,
+    }).toBase58(),
+    mint.toBase58(),
+  );
+});
+
 test("accepts cinema inventory reference as an extra read-only transfer account", () => {
   const wallet = Keypair.generate();
   const mint = Keypair.generate().publicKey;

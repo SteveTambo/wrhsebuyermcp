@@ -1,6 +1,6 @@
 {
   "name": "wrhse-buyer-mcp",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "license": "MIT",
   "type": "module",
   "description": "Customer-operated devnet buyer MCP for WRHSE checkout",
@@ -19,7 +19,7 @@
     "access": "public"
   },
   "scripts": {
-    "start": "node src/main.js",
+    "start": "node src/cli.js start",
     "test": "node --test",
     "prepublishOnly": "npm test"
   },

@@ -3,6 +3,8 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 
 export class PendingCheckoutStore {
+  #writeQueue = Promise.resolve();
+
   constructor(filePath) {
     this.filePath = filePath;
     this.entries = new Map();
@@ -32,30 +34,43 @@ export class PendingCheckoutStore {
   }
 
   get(intentId) {
-    return this.entries.get(intentId);
+    const entry = this.entries.get(intentId);
+    return entry === undefined ? undefined : structuredClone(entry);
   }
 
   list() {
-    return [...this.entries.values()];
+    return [...this.entries.values()].map((entry) => structuredClone(entry));
   }
 
   async save(entry) {
-    this.entries.set(entry.intentId, entry);
-    await this.#flush();
+    const savedEntry = structuredClone(entry);
+    await this.#update((entries) =>
+      entries.set(savedEntry.intentId, savedEntry),
+    );
   }
 
   async remove(intentId) {
-    this.entries.delete(intentId);
-    await this.#flush();
+    await this.#update((entries) => entries.delete(intentId));
   }
 
-  async #flush() {
-    await mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 });
+  async #update(update) {
+    const operation = this.#writeQueue.then(async () => {
+      const entries = new Map(this.entries);
+      update(entries);
+      await this.#flush(entries);
+      this.entries = entries;
+    });
+    this.#writeQueue = operation.catch(() => {});
+    await operation;
+  }
+
+  async #flush(entries) {
     const tempPath = `${this.filePath}.${randomUUID()}.tmp`;
     try {
+      await mkdir(dirname(this.filePath), { recursive: true, mode: 0o700 });
       await writeFile(
         tempPath,
-        JSON.stringify(Object.fromEntries(this.entries), null, 2),
+        JSON.stringify(Object.fromEntries(entries), null, 2),
         { encoding: "utf8", mode: 0o600, flag: "wx" },
       );
       await rename(tempPath, this.filePath);

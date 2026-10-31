@@ -1,6 +1,7 @@
 import { TOKEN_PROGRAM_ID, unpackMint } from "@solana/spl-token";
 import { PublicKey } from "@solana/web3.js";
 import { BuyerApiError } from "./api.js";
+import { usdcToBaseUnits } from "./usdc.js";
 
 export function createBalanceChecker(connection) {
   return async ({ walletAddress, total, mint: paymentMint }) => {
@@ -62,7 +63,7 @@ export function createBalanceChecker(connection) {
       }
       tokenUnits += BigInt(amount.amount);
     }
-    const requiredUnits = BigInt(Math.ceil(total * 1_000_000 - 1e-8));
+    const requiredUnits = usdcToBaseUnits(total);
     if (tokenUnits < requiredUnits) {
       throw new BuyerApiError(
         "The burner wallet does not have enough devnet USDC for this quote.",

@@ -54,27 +54,52 @@ Optional developer overrides are `WRHSE_BUYER_API_URL`,
 `WRHSE_BUYER_PAYMENTS_URL`, and `WRHSE_BUYER_MAX_USDC` (default 150 USDC, maximum
 150). Ordinary customers do not need to configure them.
 
-## VS Code Copilot install
+## Copilot CLI install (npm)
 
-The npm package is prepared for public publishing. Once published, install and
-register the buyer MCP in one command:
+The npm package is published. Install and register the buyer MCP in one
+command:
 
 ```powershell
 npx --yes wrhse-buyer-mcp setup
 ```
 
 Setup checks the required environment variables and adds a `wrhse-buyer` entry
-to the user's Copilot MCP configuration. Existing MCP server entries are
-preserved. If a `wrhse-buyer` entry already exists, setup asks before replacing
-it. Secret values are never written to the MCP config.
+to the Copilot CLI config at `~/.copilot/mcp-config.json` (or
+`$COPILOT_HOME/mcp-config.json`). This is the Copilot CLI `mcpServers` format,
+not VS Code's `servers` format. Existing entries are preserved. If a
+`wrhse-buyer` entry already exists, setup asks before replacing it. Secret
+values are never written to the MCP config.
 
-After setup, restart VS Code, start `wrhse-buyer` from the MCP server list, and
-verify it with a read-only product search.
+After setup, restart Copilot CLI and verify the server with a read-only product
+search.
 
-Until it is published on npm, clone the public
+## VS Code Copilot configuration
+
+VS Code uses its own MCP configuration file and `servers` format. Add this
+entry to the `servers` object in your VS Code MCP config (for example, the
+user-level `mcp.json`):
+
+```json
+{
+  "servers": {
+    "wrhse-buyer": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["--yes", "wrhse-buyer-mcp@0.1.11", "start"]
+    }
+  }
+}
+```
+
+The buyer MCP process reads its secrets from the two environment variables
+above; do not put their values in this file. Restart VS Code after changing
+the MCP config or environment variables.
+
+For a local development install, clone the public
 [wrhsebuyermcp repository](https://github.com/SteveTambo/wrhsebuyermcp),
 run `npm ci` in its root, and configure Copilot to launch `node` with the
-absolute path to `src/main.js`. Do not put either secret in MCP configuration.
+absolute path to `src/cli.js` with the `start` argument. Do not put either
+secret in MCP configuration.
 
 ## Agent instructions
 

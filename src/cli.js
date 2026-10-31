@@ -48,9 +48,20 @@ if (command === "setup") {
   } else {
     console.log(`Configured wrhse-buyer in ${result.configPath}`);
     if (result.backupPath) console.log(`Previous config backed up to ${result.backupPath}`);
-    console.log("Restart VS Code, then start wrhse-buyer from the MCP server list.");
+    console.log("Restart Copilot CLI to load the updated MCP server configuration.");
   }
 } else if (command === "start") {
+  const originalWarn = console.warn;
+  console.warn = (...args) => {
+    if (
+      args.length === 1 &&
+      args[0] ===
+        "bigint: Failed to load bindings, pure JS will be used (try npm run rebuild?)"
+    ) {
+      return;
+    }
+    originalWarn.apply(console, args);
+  };
   await import("./main.js");
 } else {
   console.log("Usage: wrhse-buyer-mcp <setup|start>");
