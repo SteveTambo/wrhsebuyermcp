@@ -33,10 +33,11 @@ process inherits them:
 | `WRHSE_BUYER_AGENT_KEY`         | Yes      | Key created in **Profile → AI agents** with **Allow agent purchases** (`checkout:purchase`) selected. Never put it in prompts or source control. |
 | `WRHSE_BUYER_SOLANA_SECRET_KEY` | Yes      | Customer's dedicated burner-wallet key as base58 64-byte secret or Solana CLI JSON keypair array. Never share it with the agent or WRHSE.        |
 
-The WRHSE API and IVANA API URLs have defaults. The payment mint is taken from
-the checkout transaction built using IVANA's configured mint; the local server
-validates that it is a six-decimal SPL token and checks the burner's balance for
-that mint. Customers do not configure a separate mint.
+The WRHSE API and IVANA API URLs have defaults. This release accepts only the
+canonical Solana devnet USDC mint (`4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`)
+and checks the burner's balance for it. Customers do not configure a separate
+mint; a checkout built with a different mint is refused before approval or
+signing.
 
 The local process sends intent-scoped balance, blockhash, broadcast, and
 recovery requests through IVANA. IVANA uses its configured `SOLANA_RPC_URL`;
@@ -72,6 +73,31 @@ values are never written to the MCP config.
 
 After setup, restart Copilot CLI and verify the server with a read-only product
 search.
+
+## Codex desktop, CLI, and IDE setup (npm)
+
+Codex uses `~/.codex/config.toml`, shared by Codex desktop, the CLI, and the IDE
+extension. To configure all three from a terminal where the two required
+environment variables are available, run this after release `0.1.13` is
+published to npm:
+
+```powershell
+npx --yes wrhse-buyer-mcp@0.1.13 setup codex
+```
+
+Setup adds the local `wrhse-buyer` stdio server, forwards only the names of
+`WRHSE_BUYER_AGENT_KEY` and `WRHSE_BUYER_SOLANA_SECRET_KEY` to the MCP process,
+and configures Codex to prompt before calling `purchase_checkout`. Secret
+values are never copied into `config.toml`. Existing Codex settings are
+preserved and backed up before a confirmed replacement. Restart Codex after
+setup. The purchase tool still requires the server's separate MCP user
+approval form before signing; if Codex cannot present that form, the purchase
+is refused without signing or sending a transaction.
+
+Verify the server in Codex with `/mcp` (TUI) or `codex mcp list` (CLI), then
+start with a read-only product search. The available buyer tools include
+seat availability, checkout preparation, purchase approval, and payment
+recovery.
 
 ## VS Code Copilot configuration
 
@@ -125,8 +151,14 @@ Give the agent these rules, without including the secret:
   For event/cinema orders, this PDF contains the ticket QR codes.
   Report the receipt path when saved; use `download_checkout_receipt` only to
   retry if automatic receipt generation failed.
-- `purchase_checkout` always requests a separate user approval form before it
-  signs. Never try to bypass a declined or unsupported approval request.
+- `purchase_checkout` validates the exact devnet USDC mint, transfer total,
+  burner source, canonical recipient token accounts, and fee limits before it
+  requests a separate approval form. Review the mint, recipient wallet owners,
+  token accounts, and exact amount per recipient. In Codex, also require the
+  native `purchase_checkout` MCP tool prompt configured by `setup codex`. Never
+  try to bypass a declined or unsupported approval request. The local client
+  cannot prove that a listed recipient belongs to the intended merchant; only
+  proceed if you can verify each destination.
 - If a result is `payment_pending` or `paid_order_pending`, do not pay again.
   Call `recover_checkout` with that intent ID until it reaches a final result.
 - If a result is `payment_failed`, no transaction was broadcast. Use its
@@ -142,12 +174,20 @@ Give the agent these rules, without including the secret:
   with people authorized to use every credential it contains.
 - Never ask for, print, infer, or transmit the wallet secret.
 
-Before signing, the local guard restricts the transaction to USDC transfers
-from the burner wallet's associated token account, checks that their total
-matches the approved quote, and caps compute-budget fees. It does not
-independently allowlist the recipient token-account owners; it relies on the
-configured WRHSE/IVANA checkout services to build the payment. Keep this
-prototype on devnet with a low-funded burner wallet.
+Immediately before signing, the local guard restricts the transaction to the
+canonical Solana devnet USDC mint and transfers from the burner's associated
+token account, checks that their total matches the quote, validates canonical
+recipient token accounts, and caps compute-budget fees. The approval form shows
+the devnet, USDC mint, each recipient wallet, token account, and exact amount.
+Codex also has its own
+`purchase_checkout` confirmation prompt. If either approval is declined or
+unavailable, the local wallet does not sign or broadcast.
+
+The buyer independently verifies the transaction structure and displayed
+recipient owners, but it cannot independently prove that a recipient wallet
+belongs to the intended merchant. That association still depends on the
+authenticated WRHSE/IVANA checkout services and your review of the destination
+addresses. Keep this prototype on devnet with a low-funded burner wallet.
 
 ## Available tools
 

@@ -13,7 +13,11 @@ import {
   SystemProgram,
   Transaction,
 } from "@solana/web3.js";
-import { assertSafeCheckoutTransaction } from "../src/transaction-guard.js";
+import {
+  DEVNET_USDC_MINT,
+  assertSafeCheckoutTransaction,
+  inspectSafeCheckoutTransaction,
+} from "../src/transaction-guard.js";
 
 function paymentTransaction({
   wallet,
@@ -41,7 +45,7 @@ function paymentTransaction({
 
 test("accepts only a burner-funded USDC transfer matching the quote", () => {
   const wallet = Keypair.generate();
-  const mint = Keypair.generate().publicKey;
+  const mint = DEVNET_USDC_MINT;
   const transaction = paymentTransaction({ wallet, mint });
   assert.equal(
     assertSafeCheckoutTransaction(transaction, {
@@ -52,9 +56,50 @@ test("accepts only a burner-funded USDC transfer matching the quote", () => {
   );
 });
 
+test("returns verified recipient wallets and exact amounts for approval", () => {
+  const wallet = Keypair.generate();
+  const mint = DEVNET_USDC_MINT;
+  const recipient = Keypair.generate();
+  const transaction = paymentTransaction({ wallet, mint, recipient });
+  const inspected = inspectSafeCheckoutTransaction(transaction, {
+    walletAddress: wallet.publicKey,
+    totalUsdc: 4,
+  });
+  assert.equal(inspected.paymentMint.toBase58(), mint.toBase58());
+  assert.deepEqual(inspected.recipients, [
+    {
+      walletAddress: recipient.publicKey.toBase58(),
+      tokenAccount: getAssociatedTokenAddressSync(
+        mint,
+        recipient.publicKey,
+      ).toBase58(),
+      amountBaseUnits: "4000000",
+    },
+  ]);
+});
+
+test("rejects a noncanonical token account created for a recipient", () => {
+  const wallet = Keypair.generate();
+  const mint = DEVNET_USDC_MINT;
+  const recipient = Keypair.generate();
+  const transaction = paymentTransaction({ wallet, mint, recipient });
+  const createAta = transaction.instructions.find((instruction) =>
+    instruction.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID),
+  );
+  createAta.keys[1].pubkey = Keypair.generate().publicKey;
+  assert.throws(
+    () =>
+      inspectSafeCheckoutTransaction(transaction, {
+        walletAddress: wallet.publicKey,
+        totalUsdc: 4,
+      }),
+    /non-canonical token account/,
+  );
+});
+
 test("rounds fractional base-unit quotes up consistently", () => {
   const wallet = Keypair.generate();
-  const mint = Keypair.generate().publicKey;
+  const mint = DEVNET_USDC_MINT;
   const transaction = paymentTransaction({
     wallet,
     mint,
@@ -71,7 +116,7 @@ test("rounds fractional base-unit quotes up consistently", () => {
 
 test("accepts cinema inventory reference as an extra read-only transfer account", () => {
   const wallet = Keypair.generate();
-  const mint = Keypair.generate().publicKey;
+  const mint = DEVNET_USDC_MINT;
   const transaction = paymentTransaction({ wallet, mint });
   const transfer = transaction.instructions.find((instruction) =>
     instruction.programId.equals(TOKEN_PROGRAM_ID),
@@ -93,7 +138,7 @@ test("accepts cinema inventory reference as an extra read-only transfer account"
 
 test("rejects extra transfer accounts that are signers or writable", () => {
   const wallet = Keypair.generate();
-  const mint = Keypair.generate().publicKey;
+  const mint = DEVNET_USDC_MINT;
 
   for (const meta of [
     { isSigner: true, isWritable: false },
@@ -118,7 +163,7 @@ test("rejects extra transfer accounts that are signers or writable", () => {
 
 test("rejects wrong totals, non-USDC instructions, and unsafe compute fees", () => {
   const wallet = Keypair.generate();
-  const mint = Keypair.generate().publicKey;
+  const mint = DEVNET_USDC_MINT;
   const wrongAmount = paymentTransaction({ wallet, mint, amount: 3_999_999n });
   assert.throws(
     () =>
@@ -127,6 +172,16 @@ test("rejects wrong totals, non-USDC instructions, and unsafe compute fees", () 
         totalUsdc: 4,
       }),
     /approved USDC amount/,
+  );
+
+  const wrongMint = Keypair.generate().publicKey;
+  assert.throws(
+    () =>
+      assertSafeCheckoutTransaction(
+        paymentTransaction({ wallet, mint: wrongMint }),
+        { walletAddress: wallet.publicKey, totalUsdc: 4 },
+      ),
+    /canonical Solana devnet USDC mint/,
   );
 
   const solTransfer = paymentTransaction({ wallet, mint }).add(
@@ -161,7 +216,7 @@ test("rejects wrong totals, non-USDC instructions, and unsafe compute fees", () 
 
 test("rejects token transfers from a nonstandard source account", () => {
   const wallet = Keypair.generate();
-  const mint = Keypair.generate().publicKey;
+  const mint = DEVNET_USDC_MINT;
   const transaction = paymentTransaction({ wallet, mint });
   const transfer = transaction.instructions.find((instruction) =>
     instruction.programId.equals(TOKEN_PROGRAM_ID),
@@ -185,7 +240,7 @@ test("rejects token transfers from a nonstandard source account", () => {
 
 test("rejects token-account creation without a matching payment", () => {
   const wallet = Keypair.generate();
-  const mint = Keypair.generate().publicKey;
+  const mint = DEVNET_USDC_MINT;
   const transaction = paymentTransaction({ wallet, mint });
   const extraOwner = Keypair.generate().publicKey;
   transaction.add(

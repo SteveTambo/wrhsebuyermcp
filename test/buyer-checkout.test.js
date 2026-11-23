@@ -8,6 +8,7 @@ import {
 } from "@solana/spl-token";
 import { ComputeBudgetProgram, Keypair, Transaction } from "@solana/web3.js";
 import { BuyerCheckout } from "../src/buyer-checkout.js";
+import { DEVNET_USDC_MINT } from "../src/transaction-guard.js";
 import { usdcToBaseUnits } from "../src/usdc.js";
 
 const future = () => new Date(Date.now() + 60_000).toISOString();
@@ -38,7 +39,7 @@ function fixture({
   saveReceipt = async (entry) => ({ status: "saved", orderId: entry.order.id }),
 } = {}) {
   const keypair = Keypair.generate();
-  const usdcMint = Keypair.generate().publicKey;
+  const usdcMint = DEVNET_USDC_MINT;
   const store = fakeStore();
   const calls = {
     createIntent: 0,
@@ -46,6 +47,7 @@ function fixture({
     pay: 0,
     recordOrder: 0,
     approval: 0,
+    approvalDetails: [],
     checkoutForIntent: 0,
   };
   let failOrderOnce = orderFailure;
@@ -172,9 +174,10 @@ function fixture({
       assert.equal(mint, usdcMint.toBase58());
       if (fundsError) throw fundsError;
     },
-    requestApproval: async () => {
+    requestApproval: async (_entry, details) => {
       if (approvalError) throw approvalError;
       calls.approval += 1;
+      calls.approvalDetails.push(details);
       return approve;
     },
   });
@@ -574,7 +577,10 @@ test("ticket credentials stay in local recovery state and are omitted from MCP r
   assert.equal(result.status, "completed");
   assert.equal(result.tickets.length, 1);
   assert.equal(result.tickets[0].seat, "A1");
-  assert.equal(JSON.stringify(result).includes("ABCDEFGHIJKLMNOPQRSTUV"), false);
+  assert.equal(
+    JSON.stringify(result).includes("ABCDEFGHIJKLMNOPQRSTUV"),
+    false,
+  );
   assert.equal(
     store.get(quote.intentId).order.tickets[0].code,
     "ABCDEFGHIJKLMNOPQRSTUV",
@@ -591,7 +597,10 @@ test("checkout automatically saves one receipt and reuses it on receipt requests
   });
   const quote = await prepare(buyer);
 
-  await assert.rejects(buyer.downloadReceipt(quote.intentId), /only after WRHSE confirms/);
+  await assert.rejects(
+    buyer.downloadReceipt(quote.intentId),
+    /only after WRHSE confirms/,
+  );
   assert.equal(savedEntries.length, 0);
 
   const completed = await buyer.purchaseCheckout(quote.intentId);
@@ -626,10 +635,7 @@ test("receipt save failures are explicit and do not retry payment", async () => 
   const completed = await buyer.purchaseCheckout(quote.intentId);
   assert.equal(completed.status, "completed");
   assert.equal(completed.receipt.status, "failed");
-  assert.equal(
-    buyer.store.get(quote.intentId).status,
-    "completed",
-  );
+  assert.equal(buyer.store.get(quote.intentId).status, "completed");
 
   await assert.rejects(
     buyer.downloadReceipt(quote.intentId),
@@ -638,33 +644,41 @@ test("receipt save failures are explicit and do not retry payment", async () => 
   assert.equal(calls.pay, 1);
 });
 
-test("declined approval never signs or pays", async () => {
+test("declined approval never signs or broadcasts", async () => {
   const { buyer, calls } = fixture({ approve: false });
   const quote = await prepare(buyer);
   const result = await buyer.purchaseCheckout(quote.intentId);
   assert.equal(result.status, "approval_declined");
-  assert.equal(calls.pay, 0);
+  assert.equal(calls.pay, 1);
+  assert.equal(calls.approvalDetails.length, 1);
+  assert.equal(calls.approvalDetails[0].network, "Solana devnet");
+  assert.equal(calls.approvalDetails[0].paymentMint.length, 44);
+  assert.equal(calls.approvalDetails[0].recipients.length, 1);
+  assert.equal(
+    calls.approvalDetails[0].recipients[0].amountBaseUnits,
+    "4000000",
+  );
   assert.equal(calls.recordOrder, 0);
+  assert.equal(buyer.store.get(quote.intentId).signature, undefined);
 });
 
 test("cannot pay when approval or a balance check fails", async () => {
-  const approvalFailure = fixture({ approvalError: new Error("unavailable") });
+  const approvalFailure = fixture({
+    approvalError: Object.assign(new Error("unavailable"), {
+      code: "APPROVAL_UNAVAILABLE",
+    }),
+  });
   const approvalQuote = await prepare(approvalFailure.buyer);
-  await assert.rejects(
-    approvalFailure.buyer.purchaseCheckout(approvalQuote.intentId),
-    /unavailable/,
+  const approvalResult = await approvalFailure.buyer.purchaseCheckout(
+    approvalQuote.intentId,
   );
-  assert.equal(approvalFailure.calls.pay, 0);
+  assert.equal(approvalResult.status, "payment_failed");
+  assert.equal(approvalResult.code, "APPROVAL_UNAVAILABLE");
+  assert.equal(approvalFailure.calls.pay, 1);
 
   for (const [code, message] of [
-    [
-      "INSUFFICIENT_SOL",
-      "The burner wallet needs at least 0.005 devnet SOL",
-    ],
-    [
-      "INSUFFICIENT_USDC",
-      "The burner wallet does not have enough devnet USDC",
-    ],
+    ["INSUFFICIENT_SOL", "The burner wallet needs at least 0.005 devnet SOL"],
+    ["INSUFFICIENT_USDC", "The burner wallet does not have enough devnet USDC"],
   ]) {
     const insufficientFunds = fixture({
       fundsError: Object.assign(new Error("balance check failed"), { code }),
@@ -676,7 +690,10 @@ test("cannot pay when approval or a balance check fails", async () => {
     assert.equal(fundsResult.status, "payment_failed");
     assert.equal(fundsResult.code, code);
     assert.match(fundsResult.message, new RegExp(message));
-    assert.match(fundsResult.message, /no payment was sent|no transaction was signed/i);
+    assert.match(
+      fundsResult.message,
+      /no payment was sent|no transaction was signed/i,
+    );
     assert.equal(insufficientFunds.calls.pay, 1);
     assert.equal(
       insufficientFunds.buyer.store.get(fundsQuote.intentId).signature,

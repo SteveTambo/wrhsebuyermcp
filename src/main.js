@@ -32,6 +32,8 @@ await store.load();
 const server = new McpServer({
   name: "wrhse-buyer",
   version: packageJson.version,
+  instructions:
+    "WRHSE buyer checkout: use search_public_products to find a listing. For Cinema, call check_cinema_seat_availability immediately before offering seats, show its exact availableSeatIds, and ask the buyer to choose; never invent seat IDs. Call prepare_checkout only with the buyer's selected products, seats, and delivery details. Show the returned server-priced items, USDC total, wallet, and expiry. Call purchase_checkout only to complete the buyer's requested purchase. It requires an explicit user approval form before it signs; if approval is unavailable or declined, no payment is sent. Never claim success until status is completed. For payment_pending or paid_order_pending, call recover_checkout and never pay again. Keep ticket receipt files and QR codes private. This server pays only from its local devnet burner wallet; never ask for or expose its secret.",
 });
 
 const buyer = new BuyerCheckout({
@@ -51,9 +53,13 @@ const buyer = new BuyerCheckout({
     try {
       assertDevnetGenesis(genesisHash, config.devnetGenesisHash);
     } catch {
-      logError("devnet_check_failed", new Error("Checkout RPC is not devnet."), {
-        tool: "purchase_checkout",
-      });
+      logError(
+        "devnet_check_failed",
+        new Error("Checkout RPC is not devnet."),
+        {
+          tool: "purchase_checkout",
+        },
+      );
       throw new BuyerApiError(
         "IVANA's checkout RPC is not connected to devnet, so no payment was signed.",
         503,
@@ -70,7 +76,7 @@ const buyer = new BuyerCheckout({
   maxUsdc: config.maxUsdc,
   checkFunds: ({ intentId, ...balance }) =>
     createBalanceChecker(connectionForIntent(intentId))(balance),
-  requestApproval: async (entry) => {
+  requestApproval: async (entry, payment) => {
     const itemLines = entry.catalogItems
       .map((item) => {
         const title = item.title ?? `Product ${item.productId}`;
@@ -98,6 +104,18 @@ const buyer = new BuyerCheckout({
           "Review this devnet purchase. Approving will sign and send a USDC transaction from the configured burner wallet.",
           itemLines,
           `Total: ${entry.total} USDC`,
+          `Network: ${payment.network}`,
+          `USDC mint: ${payment.paymentMint}`,
+          "Verified transaction recipients (review every address and amount):",
+          ...payment.recipients.map((recipient) => {
+            const baseUnits = BigInt(recipient.amountBaseUnits);
+            const whole = baseUnits / 1_000_000n;
+            const fraction = (baseUnits % 1_000_000n)
+              .toString()
+              .padStart(6, "0")
+              .replace(/0+$/, "");
+            return `- ${recipient.walletAddress}: ${whole}${fraction ? `.${fraction}` : ""} USDC (token account ${recipient.tokenAccount})`;
+          }),
           `Wallet: ${entry.walletAddress}`,
           `Deliver to: ${customer || "No delivery details supplied"}`,
           `Quote expires: ${entry.expiresAt ?? "as determined by the payment service"}`,
@@ -111,7 +129,7 @@ const buyer = new BuyerCheckout({
               type: "boolean",
               title: "Approve this devnet purchase",
               description:
-                "If selected, the local server signs and broadcasts the exact WRHSE checkout transaction.",
+                "If selected, the local server signs and broadcasts this devnet transaction to the listed recipient wallets.",
               default: false,
             },
           },

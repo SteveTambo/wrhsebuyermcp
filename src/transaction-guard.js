@@ -11,6 +11,9 @@ import { usdcToBaseUnits } from "./usdc.js";
 const MEMO_PROGRAM_ID = new PublicKey(
   "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
 );
+export const DEVNET_USDC_MINT = new PublicKey(
+  "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+);
 const MAX_COMPUTE_UNIT_PRICE = 100_000n;
 const MAX_COMPUTE_UNIT_LIMIT = 1_400_000;
 const MAX_TOKEN_ACCOUNT_CREATIONS = 32;
@@ -52,7 +55,7 @@ function assertAssociatedTokenInstruction(instruction, walletAddress, mint) {
   return address.pubkey;
 }
 
-export function assertSafeCheckoutTransaction(
+export function inspectSafeCheckoutTransaction(
   transaction,
   { walletAddress, totalUsdc },
 ) {
@@ -66,8 +69,15 @@ export function assertSafeCheckoutTransaction(
     );
   }
   const usdcMint = firstMintMeta.pubkey;
+  if (!usdcMint.equals(DEVNET_USDC_MINT)) {
+    throw new Error(
+      "The checkout does not use the canonical Solana devnet USDC mint.",
+    );
+  }
   const source = getAssociatedTokenAddressSync(usdcMint, walletAddress);
   const destinations = new Set();
+  const destinationOwners = new Map();
+  const recipientAmounts = new Map();
   const transferDestinations = new Set();
   let totalTransferred = 0n;
   let computeUnitLimitCount = 0;
@@ -81,7 +91,12 @@ export function assertSafeCheckoutTransaction(
         walletAddress,
         usdcMint,
       );
+      const owner = instruction.keys[2].pubkey;
+      if (!getAssociatedTokenAddressSync(usdcMint, owner).equals(destination)) {
+        throw new Error("The checkout creates a non-canonical token account.");
+      }
       destinations.add(destination.toBase58());
+      destinationOwners.set(destination.toBase58(), owner);
       if (destinations.size > MAX_TOKEN_ACCOUNT_CREATIONS) {
         throw new Error("The checkout creates too many token accounts.");
       }
@@ -93,13 +108,20 @@ export function assertSafeCheckoutTransaction(
       if (
         !decoded.keys.source.pubkey.equals(source) ||
         !decoded.keys.owner.pubkey.equals(walletAddress) ||
-        decoded.keys.multiSigners.some((key) => key.isSigner || key.isWritable) ||
+        decoded.keys.multiSigners.some(
+          (key) => key.isSigner || key.isWritable,
+        ) ||
         decoded.data.amount <= 0n
       ) {
         throw new Error("The checkout transfers from an unexpected account.");
       }
       totalTransferred += decoded.data.amount;
-      transferDestinations.add(decoded.keys.destination.pubkey.toBase58());
+      const destination = decoded.keys.destination.pubkey.toBase58();
+      transferDestinations.add(destination);
+      recipientAmounts.set(
+        destination,
+        (recipientAmounts.get(destination) ?? 0n) + decoded.data.amount,
+      );
       continue;
     }
 
@@ -164,5 +186,19 @@ export function assertSafeCheckoutTransaction(
   ) {
     throw new Error("The checkout transfers to an unexpected token account.");
   }
-  return usdcMint;
+  const recipients = [...recipientAmounts].map(([tokenAccount, amount]) => {
+    const owner = destinationOwners.get(tokenAccount);
+    if (!owner)
+      throw new Error("The checkout recipient could not be verified.");
+    return {
+      walletAddress: owner.toBase58(),
+      tokenAccount,
+      amountBaseUnits: amount.toString(),
+    };
+  });
+  return { paymentMint: usdcMint, recipients };
+}
+
+export function assertSafeCheckoutTransaction(transaction, options) {
+  return inspectSafeCheckoutTransaction(transaction, options).paymentMint;
 }

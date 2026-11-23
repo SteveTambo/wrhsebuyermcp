@@ -4,7 +4,7 @@ import { createLocalWallet } from "./wallet.js";
 import { BuyerApiError } from "./api.js";
 import { logError } from "./logging.js";
 import { saveCheckoutReceipt } from "./receipt.js";
-import { assertSafeCheckoutTransaction } from "./transaction-guard.js";
+import { inspectSafeCheckoutTransaction } from "./transaction-guard.js";
 
 const MAX_LINES = 20;
 const MAX_QUANTITY = 20;
@@ -103,9 +103,7 @@ function cinemaSeatAvailability(product, now = Date.now()) {
     !Number.isFinite(salesCloseAt) ||
     salesCloseAt <= now;
   const taken = new Set(
-    seating
-      ? unavailableSeats.filter((seat) => seatExists(seating, seat))
-      : [],
+    seating ? unavailableSeats.filter((seat) => seatExists(seating, seat)) : [],
   );
   const allSeatIds = seating
     ? Array.from({ length: seating.rows }, (_, rowIndex) =>
@@ -116,9 +114,7 @@ function cinemaSeatAvailability(product, now = Date.now()) {
       ).flat()
     : [];
   const freeSeatIds = allSeatIds.filter((seat) => !taken.has(seat));
-  const soldOut = seating
-    ? freeSeatIds.length === 0
-    : product.quantity <= 0;
+  const soldOut = seating ? freeSeatIds.length === 0 : product.quantity <= 0;
   const status = closed
     ? screening.status === "CANCELLED"
       ? "cancelled"
@@ -646,25 +642,37 @@ export class BuyerCheckout {
         );
       }
 
-      const approved = await this.requestApproval(entry);
-      if (!approved) return { status: "approval_declined", intentId };
-
       entry.status = "paying";
       await this.store.save(entry);
       let signedSignature;
       let paymentRejected = false;
       const wallet = createLocalWallet(this.keypair, {
         validateTransaction: async (transaction) => {
-          const paymentMint = assertSafeCheckoutTransaction(transaction, {
-            walletAddress: this.keypair.publicKey,
-            totalUsdc: entry.total,
-          });
+          const { paymentMint, recipients } = inspectSafeCheckoutTransaction(
+            transaction,
+            {
+              walletAddress: this.keypair.publicKey,
+              totalUsdc: entry.total,
+            },
+          );
           await this.checkFunds({
             intentId,
             walletAddress: entry.walletAddress,
             total: entry.total,
             mint: paymentMint.toBase58(),
           });
+          const approved = await this.requestApproval(entry, {
+            network: "Solana devnet",
+            paymentMint: paymentMint.toBase58(),
+            recipients,
+          });
+          if (!approved) {
+            throw new BuyerApiError(
+              "The buyer declined the transaction. No payment was signed or sent.",
+              403,
+              "APPROVAL_DECLINED",
+            );
+          }
         },
         afterSign: async (transaction) => {
           signedSignature = bs58.encode(transaction.signature);
@@ -738,9 +746,22 @@ export class BuyerCheckout {
             signature: entry.signature,
           };
         }
+        const wrappedErrors = [error, error?.cause, error?.cause?.cause].filter(
+          Boolean,
+        );
+        const wrappedCode = wrappedErrors.map((item) => item.code);
+        if (wrappedCode.includes("APPROVAL_DECLINED")) {
+          entry.status = "payment_failed";
+          await this.store.save(entry);
+          return {
+            status: "approval_declined",
+            message: "The buyer declined. No transaction was signed or sent.",
+            intentId,
+          };
+        }
         entry.status = "payment_failed";
         await this.store.save(entry);
-        const knownFailure = knownPreBroadcastFailure(error);
+        const knownFailure = knownPreBroadcastFailure(error?.cause ?? error);
         return {
           status: "payment_failed",
           message: paymentRejected
@@ -748,7 +769,8 @@ export class BuyerCheckout {
             : `${knownFailure ? `${knownFailure.message} ` : ""}No payment transaction was broadcast, so no payment was sent. This checkout cannot be paid again. WRHSE may keep its cinema seat hold until the payment window expires and on-chain checks confirm it is safe to release. Refresh availability before choosing seats again; if the hold remains, wait for WRHSE to clear it.`,
           code:
             knownFailure?.code ??
-            (typeof error?.code === "string" ? error.code : "PAYMENT_FAILED"),
+            wrappedCode.reverse().find((code) => typeof code === "string") ??
+            "PAYMENT_FAILED",
           intentId,
           checkoutExpiresAt: entry.expiresAt,
         };
