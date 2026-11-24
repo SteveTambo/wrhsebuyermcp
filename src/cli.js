@@ -69,7 +69,7 @@ if (command === "setup") {
       console.log(`Previous config backed up to ${result.backupPath}`);
     console.log(
       client === "codex"
-        ? "Restart Codex to load the buyer tools. purchase_checkout will require Codex confirmation and MCP user approval before signing."
+        ? "Restart Codex to load the buyer tools. purchase_checkout will show its approval form and require your approval before signing."
         : "Restart Copilot CLI to load the updated MCP server configuration.",
     );
   }

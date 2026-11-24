@@ -12,6 +12,13 @@ import { parse } from "smol-toml";
 
 const SERVER_NAME = "wrhse-buyer";
 const ENV_VARS = ["WRHSE_BUYER_AGENT_KEY", "WRHSE_BUYER_SOLANA_SECRET_KEY"];
+const APPROVAL_CATEGORIES = [
+  "sandbox_approval",
+  "rules",
+  "mcp_elicitations",
+  "request_permissions",
+  "skill_approval",
+];
 
 export function getCodexConfigPath(env = process.env) {
   return join(env.CODEX_HOME || join(homedir(), ".codex"), "config.toml");
@@ -35,8 +42,116 @@ function isCurrent(config, version) {
     actual?.command === expected.command &&
     JSON.stringify(actual?.args) === JSON.stringify(expected.args) &&
     JSON.stringify(actual?.env_vars) === JSON.stringify(expected.env_vars) &&
-    actual?.tools?.purchase_checkout?.approval_mode === "prompt"
+    actual?.tools?.purchase_checkout?.approval_mode === "prompt" &&
+    config?.approval_policy?.granular?.mcp_elicitations === true
   );
+}
+
+function buyerApprovalPolicy(config) {
+  const current = config.approval_policy;
+  if (current === "never") {
+    return {
+      granular: Object.fromEntries(
+        APPROVAL_CATEGORIES.map((category) => [
+          category,
+          category === "mcp_elicitations",
+        ]),
+      ),
+    };
+  }
+  if (current === "on-request") {
+    return {
+      granular: Object.fromEntries(
+        APPROVAL_CATEGORIES.map((category) => [category, true]),
+      ),
+    };
+  }
+  if (current === undefined) {
+    // Make the buyer's approval form available while leaving every other
+    // category to Codex's existing default behavior.
+    return { granular: { mcp_elicitations: true } };
+  }
+  if (
+    !current ||
+    typeof current !== "object" ||
+    Array.isArray(current) ||
+    !current.granular ||
+    typeof current.granular !== "object" ||
+    Array.isArray(current.granular)
+  ) {
+    throw new Error(
+      "The Codex approval_policy has an unsupported format. Set approval_policy.granular.mcp_elicitations = true before running setup again.",
+    );
+  }
+
+  const granular = { ...current.granular, mcp_elicitations: true };
+  if (Object.keys(granular).some((key) => !APPROVAL_CATEGORIES.includes(key))) {
+    throw new Error(
+      "The Codex approval_policy contains an unsupported granular category. Update it manually and run setup again.",
+    );
+  }
+  return { ...current, granular };
+}
+
+function renderApprovalPolicy(config) {
+  const policy = buyerApprovalPolicy(config);
+  const values = APPROVAL_CATEGORIES.filter((category) =>
+    Object.hasOwn(policy.granular, category),
+  ).map((category) => `${category} = ${policy.granular[category]}`);
+  return `approval_policy = { granular = { ${values.join(", ")} } }`;
+}
+
+function tomlValueHasOpenTable(lines) {
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (const line of lines) {
+    for (const character of line) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (character === "\\" && quoted) {
+        escaped = true;
+        continue;
+      }
+      if (character === '"') {
+        quoted = !quoted;
+        continue;
+      }
+      if (!quoted && character === "#") break;
+      if (!quoted && character === "{") depth += 1;
+      if (!quoted && character === "}") depth -= 1;
+    }
+  }
+  return depth > 0;
+}
+
+function setBuyerApprovalPolicy(source, config) {
+  const lines = source ? source.split(/\r?\n/) : [];
+  let start = -1;
+  let end = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^\s*\[/.test(lines[index])) break;
+    if (/^\s*approval_policy\s*=/.test(lines[index])) {
+      start = index;
+      end = index;
+      while (tomlValueHasOpenTable(lines.slice(start, end + 1))) end += 1;
+      if (end >= lines.length) {
+        throw new Error("The Codex approval_policy value is incomplete.");
+      }
+      break;
+    }
+  }
+
+  const setting = renderApprovalPolicy(config);
+  if (start >= 0) {
+    lines.splice(start, end - start + 1, setting);
+  } else {
+    const firstTable = lines.findIndex((line) => /^\s*\[/.test(line));
+    lines.splice(firstTable < 0 ? lines.length : firstTable, 0, setting, "");
+  }
+  return `${lines.join("\n").replace(/\n*$/, "\n")}`;
 }
 
 function blockFor(version) {
@@ -126,10 +241,11 @@ export async function registerBuyerCodexMcp({
     return { configured: false, configPath, reason: "already-configured" };
   }
 
-  const next = updateConfigText(source, {
+  const withBuyerServer = updateConfigText(source, {
     replacing: Boolean(existing),
     version,
   });
+  const next = setBuyerApprovalPolicy(withBuyerServer, parsed);
   try {
     parse(next);
   } catch (error) {

@@ -78,21 +78,24 @@ search.
 
 Codex uses `~/.codex/config.toml`, shared by Codex desktop, the CLI, and the IDE
 extension. To configure all three from a terminal where the two required
-environment variables are available, run this after release `0.1.13` is
+environment variables are available, run this after release `0.1.14` is
 published to npm:
 
 ```powershell
-npx --yes wrhse-buyer-mcp@0.1.13 setup codex
+npx --yes wrhse-buyer-mcp@0.1.14 setup codex
 ```
 
 Setup adds the local `wrhse-buyer` stdio server, forwards only the names of
 `WRHSE_BUYER_AGENT_KEY` and `WRHSE_BUYER_SOLANA_SECRET_KEY` to the MCP process,
-and configures Codex to prompt before calling `purchase_checkout`. Secret
-values are never copied into `config.toml`. Existing Codex settings are
-preserved and backed up before a confirmed replacement. Restart Codex after
-setup. The purchase tool still requires the server's separate MCP user
-approval form before signing; if Codex cannot present that form, the purchase
-is refused without signing or sending a transaction.
+and configures Codex to prompt before calling `purchase_checkout`. Setup also
+enables Codex's MCP elicitation approval so the server's approve/decline form
+can appear. If the existing policy is `never`, setup keeps other approval
+categories disabled and enables only MCP elicitation; an existing granular
+policy keeps its other category settings. Secret values are never copied into
+`config.toml`. Existing Codex settings are preserved and backed up before a
+confirmed replacement. Restart Codex after setup. If the form cannot be shown
+or is declined, the purchase is refused without signing or sending a
+transaction.
 
 Verify the server in Codex with `/mcp` (TUI) or `codex mcp list` (CLI), then
 start with a read-only product search. The available buyer tools include

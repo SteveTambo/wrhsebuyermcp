@@ -49,7 +49,7 @@ export function registerBuyerTools(server, buyer) {
     {
       title: "Search WRHSE public products",
       description:
-        "Search approved public WRHSE listings. Read-only. Results include event and cinema details plus a cinema availability summary. Before offering or selecting cinema seats, call check_cinema_seat_availability for the fresh seat map; show its availableSeatIds and get the buyer's seat choices.",
+        "Search approved public WRHSE listings. Read-only. Results include a stable product ID, seller/store name, public location, listing areas, price and stock; terms from the seller or location can be used to narrow duplicate product names. Results also include event and cinema details plus an availability summary. Before offering or selecting cinema seats, call check_cinema_seat_availability for the fresh seat map; show its availableSeatIds and get the buyer's seat choices.",
       inputSchema: {
         query: z.string().trim().min(2).max(100),
         buyerCountry: z
@@ -106,7 +106,7 @@ export function registerBuyerTools(server, buyer) {
     {
       title: "Prepare a WRHSE checkout",
       description:
-        "Create a server-priced, single-store USDC checkout quote for public products, including event and cinema tickets. Does not sign or pay. For reserved-seat cinema, first call check_cinema_seat_availability, show its availableSeatIds, and ask the buyer which seats they choose. Supply one seatIds entry per ticket (seatIds.length must equal quantity). Cinema screenings must be checked out separately. If a seat was taken, refresh availability and use a NEW idempotencyKey for the changed selection. WRHSE rechecks and atomically holds seats when creating the intent.",
+        "Create a server-priced, single-store USDC checkout quote for public products, including event and cinema tickets. The quote returns store identity, item subtotal, VAT, transaction fee, total, and expiry when supplied by WRHSE. Does not sign or pay. For reserved-seat cinema, first call check_cinema_seat_availability, show its availableSeatIds, and ask the buyer which seats they choose. Supply one seatIds entry per ticket (seatIds.length must equal quantity). Cinema screenings must be checked out separately. If a seat was taken, refresh availability and use a NEW idempotencyKey for the changed selection. WRHSE rechecks and atomically holds seats when creating the intent.",
       inputSchema: {
         idempotencyKey: z.string().trim().min(16).max(255),
         items: z
@@ -175,7 +175,7 @@ export function registerBuyerTools(server, buyer) {
     {
       title: "Pay for a WRHSE checkout",
       description:
-        "Pay one prepared checkout from the configured devnet burner wallet. Immediately before signing, the MCP approval form shows the server-priced cart, total, devnet USDC mint, verified recipient wallet owners and token accounts, and exact amount for each recipient. Codex setup also enables its own prompt for this tool. If either approval is declined or unavailable, no transaction is signed or sent. The client cannot independently prove that a recipient wallet belongs to the intended merchant; rely only on authenticated WRHSE/IVANA checkout services and verify displayed destinations. After WRHSE confirms the order, automatically saves a local PDF receipt and includes its path in the result. If payment_failed is returned, no transaction was broadcast, but cinema seats may remain held until WRHSE completes its safe-release checks; refresh availability before choosing again.",
+        "Pay one prepared checkout from the configured devnet burner wallet. Immediately before signing, the MCP approval form shows the seller/location, item quantities and prices, items subtotal, VAT, transaction fee, total, devnet USDC mint, verified recipient wallet owners and token accounts, and exact amount for each recipient. Codex setup also enables its own prompt for this tool. If either approval is declined or unavailable, no transaction is signed or sent. The client cannot independently prove that a recipient wallet belongs to the intended merchant; rely only on authenticated WRHSE/IVANA checkout services and verify displayed destinations. After WRHSE confirms the order, automatically saves a local PDF receipt and includes its path in the result. If payment_failed is returned, no transaction was broadcast, but cinema seats may remain held until WRHSE completes its safe-release checks; refresh availability before choosing again.",
       inputSchema: { intentId: z.string().trim().min(1).max(255) },
       annotations: {
         readOnlyHint: false,

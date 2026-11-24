@@ -244,6 +244,7 @@ function quoteItemsFor(items) {
 
 function quoteFrom(intent) {
   const total = intent?.breakdown?.total;
+  const sourceBreakdown = intent?.breakdown;
   const catalogItems = intent?.catalogItems;
   const expiresAt = Date.parse(intent?.expiresAt);
   if (
@@ -261,7 +262,35 @@ function quoteFrom(intent) {
       "INVALID_CHECKOUT_QUOTE",
     );
   }
-  return { total, catalogItems };
+  const breakdown = sourceBreakdown &&
+    ["netAmount", "vatAmount", "transactionFee"].every((key) =>
+      Number.isFinite(sourceBreakdown[key]),
+    )
+    ? {
+        netAmountUsdc: sourceBreakdown.netAmount,
+        vatAmountUsdc: sourceBreakdown.vatAmount,
+        transactionFeeUsdc: sourceBreakdown.transactionFee,
+        totalUsdc: total,
+        currency: sourceBreakdown.currency ?? "USDC",
+      }
+    : null;
+  if (
+    breakdown &&
+    (breakdown.currency !== "USDC" ||
+      Math.abs(
+        breakdown.netAmountUsdc +
+          breakdown.vatAmountUsdc +
+          breakdown.transactionFeeUsdc -
+          total,
+      ) > 0.000001)
+  ) {
+    throw new BuyerApiError(
+      "WRHSE returned an inconsistent checkout price breakdown.",
+      502,
+      "INVALID_CHECKOUT_QUOTE",
+    );
+  }
+  return { total, catalogItems, breakdown };
 }
 
 export class BuyerCheckout {
@@ -299,6 +328,7 @@ export class BuyerCheckout {
     this.checkFunds = checkFunds;
     this.now = now;
     this.locks = new Map();
+    this.searchedProducts = new Map();
   }
 
   async searchProducts({ query, buyerCountry }) {
@@ -306,23 +336,39 @@ export class BuyerCheckout {
       query: query.trim().slice(0, 100),
       buyerCountry: buyerCountry?.toUpperCase(),
     });
-    return Promise.all(
+    const products = await Promise.all(
       results.slice(0, 10).map(async (product) => {
         const detail = await this.api.getProduct(product.id);
         const current = detail?.data;
         return {
           id: product.id,
-          title: product.title,
-          price: product.price,
+          productId: product.id,
+          title: current?.title ?? product.title,
+          price: current?.price ?? product.price,
           quantity: current?.quantity ?? product.quantity,
           sizes: current?.sizes ?? product.sizes,
-          tenantSlug: product.tenantSlug,
-          storeName: product.store?.name,
-          area: product.area?.name,
+          tenantSlug: current?.tenantSlug ?? product.tenantSlug,
+          store: product.store ?? null,
+          storeName: product.store?.name ?? null,
+          storeAreas: product.store?.areas ?? [],
+          location: product.store
+            ? {
+                city: product.store.locationCity,
+                region: product.store.locationRegion,
+                country: product.store.locationCountry,
+              }
+            : null,
           ...(current ? ticketDetails(current, this.now()) : {}),
         };
       }),
     );
+    for (const product of products) {
+      this.searchedProducts.set(product.id, {
+        tenantSlug: product.tenantSlug,
+        store: product.store,
+      });
+    }
+    return products;
   }
 
   async checkCinemaSeatAvailability({ productId }) {
@@ -561,6 +607,8 @@ export class BuyerCheckout {
           .flatMap((requested) => requested.seatIds ?? []);
         return seatIds.length ? { ...item, seatIds } : item;
       }),
+      breakdown: quote.breakdown,
+      merchant: this.#merchantFor(selected, productDetails),
       total: quote.total,
       expiresAt: intent.expiresAt,
       status: "prepared",
@@ -947,7 +995,13 @@ export class BuyerCheckout {
       walletAddress: entry.walletAddress,
       paymentMethod: entry.paymentMethod,
       items: entry.catalogItems,
+      ...(entry.merchant ? { store: entry.merchant } : {}),
       customer: entry.customer,
+      ...(entry.breakdown ? { breakdown: entry.breakdown } : {}),
+      itemsSubtotalUsdc: entry.catalogItems.reduce(
+        (sum, item) => sum + item.unitPriceUsdc * item.quantity,
+        0,
+      ),
       totalUsdc: entry.total,
       expiresAt: entry.expiresAt,
       maximumUsdc: this.maxUsdc,
@@ -982,10 +1036,37 @@ export class BuyerCheckout {
       status: "completed",
       intentId: entry.intentId,
       ...entry.order,
+      items: entry.catalogItems,
+      ...(entry.merchant ? { store: entry.merchant } : {}),
+      ...(entry.breakdown ? { breakdown: entry.breakdown } : {}),
       ...(Array.isArray(tickets) ? { tickets } : {}),
+      itemsSubtotalUsdc: entry.catalogItems.reduce(
+        (sum, item) => sum + item.unitPriceUsdc * item.quantity,
+        0,
+      ),
       totalUsdc: entry.total,
       orderSubtotalUsdc: entry.order.totalAmount,
       receipt,
+    };
+  }
+
+  #merchantFor(selected, productDetails) {
+    const slugs = new Set(productDetails.map((product) => product.tenantSlug));
+    if (slugs.size !== 1) return null;
+    const tenantSlug = [...slugs][0];
+    const found = selected
+      .map((item) => this.searchedProducts.get(item.productId))
+      .find((origin) => origin?.tenantSlug === tenantSlug && origin.store);
+    if (!found) return null;
+    const { name, locationCity, locationRegion, locationCountry, areas = [] } = found.store;
+    return {
+      name,
+      location: {
+        city: locationCity ?? null,
+        region: locationRegion ?? null,
+        country: locationCountry ?? null,
+      },
+      areas,
     };
   }
 

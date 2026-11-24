@@ -77,15 +77,58 @@ const buyer = new BuyerCheckout({
   checkFunds: ({ intentId, ...balance }) =>
     createBalanceChecker(connectionForIntent(intentId))(balance),
   requestApproval: async (entry, payment) => {
+    const amount = (value) => {
+      const fixed = Number(value).toFixed(6);
+      return fixed.replace(/0+$/, "").replace(/\.$/, "");
+    };
     const itemLines = entry.catalogItems
       .map((item) => {
         const title = item.title ?? `Product ${item.productId}`;
         const seats = item.seatIds?.length
           ? ` (Seats: ${item.seatIds.join(", ")})`
           : "";
-        return `- ${title} × ${item.quantity}${seats}`;
+        const unitPrice = Number(item.unitPriceUsdc);
+        const price = Number.isFinite(unitPrice)
+          ? ` — ${amount(unitPrice)} USDC each; ${amount(unitPrice * item.quantity)} USDC line total`
+          : "";
+        return `- ${title} × ${item.quantity}${price}${seats}`;
       })
       .join("\n");
+    const store = entry.merchant
+      ? [
+          entry.merchant.name,
+          entry.merchant.areas?.map((area) => area.name).filter(Boolean).join(", "),
+          [
+            entry.merchant.location?.city,
+            entry.merchant.location?.region,
+            entry.merchant.location?.country,
+          ]
+            .filter(Boolean)
+            .join(", "),
+        ]
+          .filter(Boolean)
+          .join(" — ")
+      : "Seller/location unavailable from the search result";
+    const itemsSubtotal = entry.catalogItems.reduce(
+      (sum, item) => sum + Number(item.unitPriceUsdc ?? 0) * item.quantity,
+      0,
+    );
+    const netAmountLine =
+      entry.breakdown &&
+      Math.abs(entry.breakdown.netAmountUsdc - itemsSubtotal) > 0.000001
+        ? [`Server net amount: ${amount(entry.breakdown.netAmountUsdc)} USDC`]
+        : [];
+    const pricing = [
+      `Items subtotal: ${amount(itemsSubtotal)} USDC`,
+      ...netAmountLine,
+      ...(entry.breakdown
+        ? [
+            `VAT: ${amount(entry.breakdown.vatAmountUsdc)} USDC`,
+            `Transaction fee: ${amount(entry.breakdown.transactionFeeUsdc)} USDC`,
+          ]
+        : ["Fees: included in the total; breakdown unavailable"]),
+      `Total charged: ${amount(entry.total)} USDC`,
+    ].join("\n");
     const customer = [
       entry.customer.name,
       entry.customer.email,
@@ -102,8 +145,9 @@ const buyer = new BuyerCheckout({
         mode: "form",
         message: [
           "Review this devnet purchase. Approving will sign and send a USDC transaction from the configured burner wallet.",
+          `Store: ${store}`,
           itemLines,
-          `Total: ${entry.total} USDC`,
+          pricing,
           `Network: ${payment.network}`,
           `USDC mint: ${payment.paymentMint}`,
           "Verified transaction recipients (review every address and amount):",
